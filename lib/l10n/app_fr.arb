@@ -1,0 +1,116 @@
+{
+  "@@locale": "fr",
+  "appTitle": "Muvio",
+  "appTagline": "Le streaming sans limites, ouvert à tous.",
+  "navHome": "Accueil",
+  "navSearch": "Recherche",
+  "navAddons": "Addons",
+  "navLibrary": "Bibliothèque",
+  "navProfile": "Profil",
+  "homeOriginalBadge": "UN FILM ORIGINAL MUVIO",
+  "watchNow": "Regarder",
+  "myList": "Ma liste",
+  "inMyList": "Dans ma liste",
+  "continueWatching": "Continuer à regarder",
+  "trending": "Tendances",
+  "newReleases": "Nouveautés",
+  "seeAll": "Voir tout",
+  "remainingTime": "{time} restantes",
+  "@remainingTime": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "addonsTitle": "Addons",
+  "stremioAddonsTab": "Stremio Addons",
+  "nuvioPluginsTab": "Nuvio Plugins",
+  "addAddonByUrlTitle": "Ajouter un addon via URL",
+  "addAddonByUrlSubtitle": "Entrez l'URL d'un addon Stremio pour l'installer.",
+  "addAddonHint": "https://exemple.com/manifest.json",
+  "addButton": "Ajouter",
+  "installedBadge": "Installé",
+  "installButton": "Installer",
+  "offlineBadge": "Hors ligne",
+  "addonDeleted": "Addon supprimé",
+  "addonInstalledSuccess": "Addon installé avec succès",
+  "manifestPreviewTitle": "Aperçu du Manifest",
+  "confirmInstall": "Confirmer l'installation",
+  "cancel": "Annuler",
+  "delete": "Supprimer",
+  "searchHint": "Rechercher films, séries, addons...",
+  "genreAll": "Tout",
+  "genreAction": "Action",
+  "genreDrama": "Drame",
+  "genreSciFi": "Sci-Fi",
+  "genreAnimation": "Animation",
+  "genreComedy": "Comédie",
+  "top10Today": "Top 10 aujourd'hui",
+  "noResultsTitle": "Aucun résultat trouvé",
+  "noResultsSubtitle": "Essayez un autre mot-clé ou installez davantage d'addons.",
+  "moviesGroup": "Films",
+  "seriesGroup": "Séries",
+  "channelsGroup": "Chaînes",
+  "libraryTitle": "Ma bibliothèque",
+  "openSourceSubtitle": "open source",
+  "downloadsTab": "Téléchargements",
+  "historyTab": "Historique",
+  "pauseAll": "Tout mettre en pause",
+  "resumeAll": "Tout reprendre",
+  "storageUsed": "{used} Go utilisés sur {total} Go",
+  "@storageUsed": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      },
+      "total": {
+        "type": "String"
+      }
+    }
+  },
+  "emptyListTitle": "Votre liste est vide",
+  "emptyListSubtitle": "Ajoutez des films et séries à votre liste pour les retrouver ici.",
+  "emptyHistoryTitle": "Aucun historique",
+  "emptyHistorySubtitle": "Les contenus que vous regardez apparaîtront ici avec reprise automatique.",
+  "profileUser": "Muvio User",
+  "openSourceBadge": "Open Source",
+  "settingsAccount": "Compte",
+  "settingsPlaybackQuality": "Lecture & Qualité",
+  "settingsSubtitlesLanguages": "Sous-titres & Langues",
+  "settingsInstalledAddons": "Addons installés ({count})",
+  "@settingsInstalledAddons": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "manageAction": "Gérer",
+  "settingsTheme": "Thème",
+  "settingsUpdates": "Mises à jour",
+  "settingsAbout": "À propos de Muvio",
+  "openSourceCardTitle": "Muvio est open source",
+  "openSourceCardBody": "Muvio est développé par la communauté. Contribuez, signalez des problèmes ou proposez des améliorations sur GitHub.",
+  "viewOnGithub": "Voir sur GitHub",
+  "versionFooter": "v1.0.0 · Open Source",
+  "selectSourceTitle": "Select Source",
+  "selectSourceSubtitle": "Choose a stream from your installed add-ons.",
+  "sourcesCount": "Sources · {count} addons",
+  "@sourcesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "legalDisclaimer": "Muvio est un lecteur et agrégateur multimédia open source. L'application n'héberge, ne stocke et ne distribue aucun contenu protégé. Elle lit uniquement les flux fournis par les addons tiers installés volontairement par l'utilisateur.",
+  "castSection": "Distribution",
+  "availableStreams": "Sources disponibles",
+  "downloadAction": "Télécharger",
+  "episodesSection": "Épisodes",
+  "clearCache": "Vider le cache",
+  "cacheCleared": "Cache vidé avec succès",
+  "privacyNotice": "Aucune télémétrie, aucun tracker, aucune publicité. Vos données restent strictement sur votre appareil.",
+  "upToDate": "Vous utilisez la dernière version (v1.0.0)."
+}

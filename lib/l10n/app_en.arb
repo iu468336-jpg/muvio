@@ -1,0 +1,116 @@
+{
+  "@@locale": "en",
+  "appTitle": "Muvio",
+  "appTagline": "Unlimited streaming, open to everyone.",
+  "navHome": "Home",
+  "navSearch": "Search",
+  "navAddons": "Addons",
+  "navLibrary": "Library",
+  "navProfile": "Profile",
+  "homeOriginalBadge": "A MUVIO ORIGINAL FILM",
+  "watchNow": "Watch",
+  "myList": "My List",
+  "inMyList": "In My List",
+  "continueWatching": "Continue Watching",
+  "trending": "Trending",
+  "newReleases": "New Releases",
+  "seeAll": "See all",
+  "remainingTime": "{time} left",
+  "@remainingTime": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "addonsTitle": "Addons",
+  "stremioAddonsTab": "Stremio Addons",
+  "nuvioPluginsTab": "Nuvio Plugins",
+  "addAddonByUrlTitle": "Add addon via URL",
+  "addAddonByUrlSubtitle": "Enter a Stremio addon URL to install it.",
+  "addAddonHint": "https://example.com/manifest.json",
+  "addButton": "Add",
+  "installedBadge": "Installed",
+  "installButton": "Install",
+  "offlineBadge": "Offline",
+  "addonDeleted": "Addon removed",
+  "addonInstalledSuccess": "Addon installed successfully",
+  "manifestPreviewTitle": "Manifest Preview",
+  "confirmInstall": "Confirm Install",
+  "cancel": "Cancel",
+  "delete": "Delete",
+  "searchHint": "Search movies, series, addons...",
+  "genreAll": "All",
+  "genreAction": "Action",
+  "genreDrama": "Drama",
+  "genreSciFi": "Sci-Fi",
+  "genreAnimation": "Animation",
+  "genreComedy": "Comedy",
+  "top10Today": "Top 10 Today",
+  "noResultsTitle": "No results found",
+  "noResultsSubtitle": "Try another keyword or install more addons.",
+  "moviesGroup": "Movies",
+  "seriesGroup": "Series",
+  "channelsGroup": "Channels",
+  "libraryTitle": "My Library",
+  "openSourceSubtitle": "open source",
+  "downloadsTab": "Downloads",
+  "historyTab": "History",
+  "pauseAll": "Pause all",
+  "resumeAll": "Resume all",
+  "storageUsed": "{used} GB used of {total} GB",
+  "@storageUsed": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      },
+      "total": {
+        "type": "String"
+      }
+    }
+  },
+  "emptyListTitle": "Your list is empty",
+  "emptyListSubtitle": "Add movies and shows to your list to find them here.",
+  "emptyHistoryTitle": "No playback history",
+  "emptyHistorySubtitle": "Items you watch will appear here with instant resume.",
+  "profileUser": "Muvio User",
+  "openSourceBadge": "Open Source",
+  "settingsAccount": "Account",
+  "settingsPlaybackQuality": "Playback & Quality",
+  "settingsSubtitlesLanguages": "Subtitles & Languages",
+  "settingsInstalledAddons": "Installed Addons ({count})",
+  "@settingsInstalledAddons": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "manageAction": "Manage",
+  "settingsTheme": "Theme",
+  "settingsUpdates": "Updates",
+  "settingsAbout": "About Muvio",
+  "openSourceCardTitle": "Muvio is open source",
+  "openSourceCardBody": "Muvio is built by the community. Contribute, report issues, or suggest improvements on GitHub.",
+  "viewOnGithub": "View on GitHub",
+  "versionFooter": "v1.0.0 · Open Source",
+  "selectSourceTitle": "Select Source",
+  "selectSourceSubtitle": "Choose a stream from your installed add-ons.",
+  "sourcesCount": "Sources · {count} addons",
+  "@sourcesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "legalDisclaimer": "Muvio is an open-source media player and aggregator. The app does not host, store, or distribute copyrighted content. It only plays streams provided by third-party addons voluntarily installed by the user.",
+  "castSection": "Cast",
+  "availableStreams": "Available Sources",
+  "downloadAction": "Download",
+  "episodesSection": "Episodes",
+  "clearCache": "Clear cache",
+  "cacheCleared": "Cache cleared successfully",
+  "privacyNotice": "Zero telemetry, zero trackers, zero ads. Your data stays strictly on your device.",
+  "upToDate": "You are running the latest version (v1.0.0)."
+}
