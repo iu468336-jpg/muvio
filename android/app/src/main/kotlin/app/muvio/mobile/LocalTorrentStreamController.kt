@@ -61,11 +61,7 @@ class LocalTorrentStreamController(private val saveDir: File) {
         init {
             Thread {
                 try {
-                    val tiBytes = session.fetchMagnet(magnetUri, 15)
-                    if (tiBytes != null) {
-                        val ti = org.libtorrent4j.TorrentInfo.bdecode(tiBytes)
-                        session.download(ti, rootDir, null, null, null, TorrentFlags.SEQUENTIAL_DOWNLOAD)
-                    }
+                    session.download(magnetUri, rootDir, TorrentFlags.SEQUENTIAL_DOWNLOAD)
                 } catch (_: Throwable) {
                 }
             }.apply { isDaemon = true }.start()
