@@ -310,13 +310,15 @@ class LocalTorrentStreamController(private val saveDir: File) {
                 configureTargetFile(h, 0)
                 if (selectedFileIdx >= 0) return true
             }
+            var interrupted = false
             synchronized(pieceLock) {
                 try {
                     pieceLock.wait(250)
                 } catch (_: InterruptedException) {
-                    break
+                    interrupted = true
                 }
             }
+            if (interrupted) return false
         }
         return selectedFileIdx >= 0 && selectedFile != null && pieceLength > 0
     }
@@ -412,7 +414,7 @@ class LocalTorrentStreamController(private val saveDir: File) {
         override fun serve(httpSession: IHTTPSession): Response {
             if (!waitForMetadata(45_000L)) {
                 return newFixedLengthResponse(
-                    Response.Status.GATEWAY_TIMEOUT,
+                    Response.Status.REQUEST_TIMEOUT,
                     MIME_PLAINTEXT,
                     "Metadata timeout"
                 )
@@ -494,12 +496,16 @@ class LocalTorrentStreamController(private val saveDir: File) {
             if (r != null) return r
             val deadline = System.currentTimeMillis() + 30_000L
             while (!stopped && !file.exists() && System.currentTimeMillis() < deadline) {
+                var interrupted = false
                 synchronized(pieceLock) {
                     try {
                         pieceLock.wait(150)
                     } catch (_: InterruptedException) {
-                        break
+                        interrupted = true
                     }
+                }
+                if (interrupted) {
+                    throw IOException("Interrupted waiting for file")
                 }
             }
             if (!file.exists()) {
