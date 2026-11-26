@@ -89,8 +89,12 @@ class _PortraitPlayerView extends StatelessWidget {
                             border: Border.all(color: AppColors.line),
                           ),
                           child: Text(
-                            '👤 ${activeStream.seeders} · '
-                            '${Formatters.formatBytesFr(activeStream.sizeBytes)}',
+                            activeStream.isTorrent &&
+                                    state._telemetry.peers > 0
+                                ? '👤 ${state._telemetry.peers} · '
+                                    '${(state._telemetry.downloadSpeedBytesPerSec / 1024).round()} Ko/s'
+                                : '👤 ${activeStream.seeders} · '
+                                    '${Formatters.formatBytesFr(activeStream.sizeBytes)}',
                             style: AppTypography.caption.copyWith(fontSize: 11),
                           ),
                         ),

@@ -249,7 +249,8 @@ class AddonRepository {
         .go();
 
     // Reset all failureCount counters so existing addons work fresh
-    await (_db.update(_db.addonEntries))
+    await _db
+        .update(_db.addonEntries)
         .write(const AddonEntriesCompanion(failureCount: Value(0)));
 
     await _db.into(_db.settingEntries).insertOnConflictUpdate(
