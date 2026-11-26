@@ -1,10 +1,9 @@
 import 'package:drift/drift.dart';
 import 'package:muvio/core/storage/app_database.dart';
 import 'package:muvio/data/models/media_models.dart';
-import 'package:muvio/data/models/seed_catalog.dart';
 
-/// Persists Watchlist ("Ma liste"), Watch History with exact-second resume,
-/// and queued/active Downloads inside Drift SQLite.
+/// Persists Watchlist ("Ma liste"), real Watch History with exact-second resume,
+/// and real queued/active Downloads inside Drift SQLite (zero fake pre-populated rows).
 class LibraryRepository {
   LibraryRepository(this._db);
 
@@ -14,18 +13,6 @@ class LibraryRepository {
     final rows = await (_db.select(_db.libraryEntries)
           ..orderBy([(t) => OrderingTerm.desc(t.addedAt)]))
         .get();
-
-    if (rows.isEmpty) {
-      // Seed initial curated watchlist matching Screen 5 mockup
-      final initialIds = {'tt0816692', 'tt0468569', 'tt1375666', 'tt0068646'};
-      final seeded = SeedCatalogData.catalogItems
-          .where((m) => initialIds.contains(m.id))
-          .toList();
-      for (final item in seeded) {
-        await addToWatchlist(item);
-      }
-      return seeded;
-    }
 
     return rows
         .map(
@@ -70,50 +57,6 @@ class LibraryRepository {
           ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)]))
         .get();
 
-    if (rows.isEmpty) {
-      // Seed initial "Continuer à regarder" items matching Screen 1 mockup
-      final dune = SeedCatalogData.heroItems[1];
-      final tlou =
-          SeedCatalogData.catalogItems.firstWhere((e) => e.id == 'tt3581920');
-      final shogun = SeedCatalogData.heroItems[3];
-      final interstellar = SeedCatalogData.heroItems[2];
-
-      final seeded = [
-        WatchProgressItem(
-          media: dune,
-          positionSeconds: 2640,
-          durationSeconds: 12600,
-          episodeBadge: '2h 46m restantes',
-          updatedAt: DateTime.now().subtract(const Duration(minutes: 10)),
-        ),
-        WatchProgressItem(
-          media: tlou,
-          positionSeconds: 1920,
-          durationSeconds: 3480,
-          episodeBadge: 'S1 · E5',
-          updatedAt: DateTime.now().subtract(const Duration(hours: 2)),
-        ),
-        WatchProgressItem(
-          media: shogun,
-          positionSeconds: 2500,
-          durationSeconds: 3600,
-          episodeBadge: 'S1 · E7',
-          updatedAt: DateTime.now().subtract(const Duration(hours: 5)),
-        ),
-        WatchProgressItem(
-          media: interstellar,
-          positionSeconds: 5880,
-          durationSeconds: 10140,
-          episodeBadge: '1h 11m restantes',
-          updatedAt: DateTime.now().subtract(const Duration(days: 1)),
-        ),
-      ];
-      for (final p in seeded) {
-        await saveWatchProgress(p);
-      }
-      return seeded;
-    }
-
     return rows
         .map(
           (r) => WatchProgressItem(
@@ -153,56 +96,8 @@ class LibraryRepository {
 
   Future<List<DownloadTaskItem>> loadDownloads() async {
     final rows = await (_db.select(_db.downloadEntries)
-          ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
+          ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
         .get();
-
-    if (rows.isEmpty) {
-      // Seed Screen 5 downloads mockup state
-      const gb = 1024 * 1024 * 1024;
-      final total18Gb = (1.8 * gb).round();
-      final seeded = [
-        DownloadTaskItem(
-          id: 'dl_dune2',
-          mediaId: 'tt15239678',
-          title: 'Dune: Part Two',
-          thumbnail:
-              'https://image.tmdb.org/t/p/w500/xOMo8BRK7PfcJv9JCnx7s5hj0PX.jpg',
-          quality: '1080p',
-          totalBytes: total18Gb,
-          downloadedBytes: (total18Gb * 0.65).round(),
-          status: DownloadStatus.downloading,
-          streamUrl: SeedCatalogData.sampleVideoHls,
-        ),
-        DownloadTaskItem(
-          id: 'dl_jw4',
-          mediaId: 'tt10366206',
-          title: 'John Wick: Chapter 4',
-          thumbnail:
-              'https://image.tmdb.org/t/p/w500/h8gHn0OzBoaefsYseUByqsmEDMY.jpg',
-          quality: '1080p',
-          totalBytes: total18Gb,
-          downloadedBytes: (total18Gb * 0.65).round(),
-          status: DownloadStatus.downloading,
-          streamUrl: SeedCatalogData.sampleVideoBackup,
-        ),
-        DownloadTaskItem(
-          id: 'dl_batman',
-          mediaId: 'tt1877830',
-          title: 'The Batman',
-          thumbnail:
-              'https://image.tmdb.org/t/p/w500/b0PlSFdDwbyK0cf5RxwDpaOJQvQ.jpg',
-          quality: '1080p',
-          totalBytes: total18Gb,
-          downloadedBytes: total18Gb,
-          status: DownloadStatus.completed,
-          streamUrl: SeedCatalogData.sampleVideoSciFi,
-        ),
-      ];
-      for (final d in seeded) {
-        await upsertDownload(d);
-      }
-      return seeded;
-    }
 
     return rows
         .map(

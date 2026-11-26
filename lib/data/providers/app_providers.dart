@@ -95,18 +95,25 @@ class AddonsController extends _$AddonsController {
       final current = state.valueOrNull ?? const <InstalledAddon>[];
       final withoutDup = current.where((a) => a.id != res.value.id).toList();
       state = AsyncData([res.value, ...withoutDup]);
+      ref.invalidate(homeCatalogProvider);
     }
     return res;
   }
 
-  Future<void> toggleInstallProposed(InstalledAddon addon) async {
-    final updated = addon.copyWith(installed: true, enabled: true);
-    await ref.read(addonRepositoryProvider).updateAddonState(updated);
-    final current = state.valueOrNull ?? const <InstalledAddon>[];
-    state = AsyncData([
-      for (final a in current)
-        if (a.id == addon.id) updated else a,
-    ]);
+  Future<Result<InstalledAddon>> toggleInstallProposed(
+    InstalledAddon addon,
+  ) async {
+    final res =
+        await ref.read(addonRepositoryProvider).installProposedAddon(addon);
+    if (res is Success<InstalledAddon>) {
+      final current = state.valueOrNull ?? const <InstalledAddon>[];
+      state = AsyncData([
+        for (final a in current)
+          if (a.id == addon.id || a.id == res.value.id) res.value else a,
+      ]);
+      ref.invalidate(homeCatalogProvider);
+    }
+    return res;
   }
 
   Future<void> toggleEnabled(InstalledAddon addon,
@@ -118,12 +125,14 @@ class AddonsController extends _$AddonsController {
       for (final a in current)
         if (a.id == addon.id) updated else a,
     ]);
+    ref.invalidate(homeCatalogProvider);
   }
 
   Future<void> deleteAddon(String addonId) async {
     await ref.read(addonRepositoryProvider).removeAddon(addonId);
     final current = state.valueOrNull ?? const <InstalledAddon>[];
     state = AsyncData(current.where((a) => a.id != addonId).toList());
+    ref.invalidate(homeCatalogProvider);
   }
 }
 

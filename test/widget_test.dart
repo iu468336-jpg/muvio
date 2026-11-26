@@ -88,6 +88,14 @@ class _InMemoryAddonRepo implements AddonRepository {
   }
 
   @override
+  Future<Result<InstalledAddon>> installProposedAddon(
+    InstalledAddon proposed,
+  ) async {
+    final updated = proposed.copyWith(installed: true, enabled: true);
+    return Success(updated);
+  }
+
+  @override
   Future<void> recordFailure(InstalledAddon addon) async {}
 
   @override

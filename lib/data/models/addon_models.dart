@@ -84,9 +84,24 @@ class AddonManifest {
   factory AddonManifest.fromJson(
     Map<String, dynamic> json, {
     AddonKind kind = AddonKind.stremio,
+    String? fallbackUrl,
   }) {
-    final id = json['id']?.toString().trim() ?? '';
     final name = json['name']?.toString().trim() ?? '';
+    final isScraperRepo = json['scrapers'] is List;
+    final effectiveKind = isScraperRepo ? AddonKind.nuvio : kind;
+
+    var id = json['id']?.toString().trim() ?? '';
+    if (id.isEmpty && name.isNotEmpty) {
+      final slug = name
+          .toLowerCase()
+          .replaceAll(RegExp('[^a-z0-9]+'), '.')
+          .replaceAll(RegExp(r'^\.+|\.+$'), '');
+      final hostSlug = fallbackUrl != null
+          ? (Uri.tryParse(fallbackUrl)?.host.replaceAll('.', '_') ?? 'repo')
+          : 'repo';
+      id = 'nuvio.$hostSlug.$slug';
+    }
+
     if (id.isEmpty || name.isEmpty) {
       throw const FormatException('Manifest invalide: id ou name manquant.');
     }
@@ -101,6 +116,8 @@ class AddonManifest {
           resources.add(res['name'].toString());
         }
       }
+    } else if (isScraperRepo) {
+      resources.add('stream');
     }
 
     final types = <String>[];
@@ -108,6 +125,18 @@ class AddonManifest {
       for (final t in json['types'] as List) {
         if (t != null) types.add(t.toString());
       }
+    }
+
+    var description = json['description']?.toString() ?? '';
+    if (description.isEmpty && isScraperRepo) {
+      final scrapers = json['scrapers'] as List;
+      final sampleNames = scrapers
+          .whereType<Map<String, dynamic>>()
+          .map((s) => s['name']?.toString() ?? '')
+          .where((s) => s.isNotEmpty)
+          .take(5)
+          .join(', ');
+      description = 'Dépôt Nuvio (${scrapers.length} scrapers : $sampleNames…)';
     }
 
     final catalogs = <AddonCatalogDef>[];
@@ -134,7 +163,7 @@ class AddonManifest {
       id: id,
       version: json['version']?.toString() ?? '1.0.0',
       name: name,
-      description: json['description']?.toString() ?? '',
+      description: description,
       resources: resources,
       types: types.isEmpty ? const ['movie', 'series'] : types,
       catalogs: catalogs,
@@ -142,7 +171,7 @@ class AddonManifest {
       logo: json['logo']?.toString() ?? json['icon']?.toString(),
       background: json['background']?.toString(),
       behaviorHints: hints,
-      kind: kind,
+      kind: effectiveKind,
     );
   }
 
@@ -220,10 +249,11 @@ class InstalledAddon {
     bool? enabled,
     int? failureCount,
     AddonManifest? manifest,
+    String? manifestUrl,
   }) {
     return InstalledAddon(
       id: id,
-      manifestUrl: manifestUrl,
+      manifestUrl: manifestUrl ?? this.manifestUrl,
       manifest: manifest ?? this.manifest,
       installed: installed ?? this.installed,
       enabled: enabled ?? this.enabled,

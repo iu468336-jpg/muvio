@@ -87,7 +87,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       l10n.genreAnimation,
       l10n.genreComedy,
     ];
-    final top10 = SeedCatalogData.catalogItems.take(10).toList();
+    final top10 =
+        (_results.isNotEmpty ? _results : SeedCatalogData.catalogItems)
+            .take(10)
+            .toList();
     final isFiltering = _query.trim().isNotEmpty;
 
     return SafeArea(
@@ -183,7 +186,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.md)),
             SliverToBoxAdapter(
               child: SizedBox(
-                height: 196,
+                height: 174,
                 child: ListView.separated(
                   padding: const EdgeInsets.symmetric(
                     horizontal: AppSpacing.screenPadding,

@@ -16,19 +16,23 @@ final dioCacheStoreProvider = Provider<MemCacheStore>((ref) {
   return store;
 });
 
-/// Configured Dio client enforcing 10s timeouts, 5 MB max payload,
-/// smart retries, and 5-minute catalog cache.
+/// Configured Dio client enforcing 12s timeouts, 5 MB max payload,
+/// Cloudflare-friendly User-Agent, smart retries, and 5-minute catalog cache.
 final dioClientProvider = Provider<Dio>((ref) {
   final cacheStore = ref.watch(dioCacheStoreProvider);
 
   final dio = Dio(
     BaseOptions(
-      connectTimeout: const Duration(seconds: 10),
-      receiveTimeout: const Duration(seconds: 10),
-      sendTimeout: const Duration(seconds: 10),
+      connectTimeout: const Duration(seconds: 12),
+      receiveTimeout: const Duration(seconds: 12),
+      sendTimeout: const Duration(seconds: 12),
+      followRedirects: true,
+      maxRedirects: 5,
       headers: const {
-        'Accept': 'application/json',
-        'User-Agent': 'Muvio/1.0.0 (Android; OpenSource)',
+        'Accept': 'application/json, text/plain, */*',
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 14; Mobile) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/131.0.0.0 Mobile Safari/537.36 Stremio/1.6.12 Muvio/1.0.1',
       },
     ),
   );

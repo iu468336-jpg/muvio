@@ -16,8 +16,9 @@ import 'package:muvio/shared/widgets/skeleton_and_empty.dart';
 part 'home_widgets.dart';
 
 /// Screen 1 — Accueil (Portrait):
-/// Header MUVIO + Avatar, Hero Carousel 16:9 ("ÉCLIPSE"),
-/// Continuer à regarder (2:3 + progress bar + S1·E5), Tendances, Nouveautés ("N" badge),
+/// Header MUVIO + Avatar, Hero Carousel ("ÉCLIPSE" + live Cinemeta highlights),
+/// Continuer à regarder (shown ONLY when the user has actually watched content),
+/// Tendances (Films populaires Cinemeta), Séries populaires, Nouveautés ("N" badge),
 /// Pull-to-refresh & skeleton shimmer.
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -40,11 +41,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
     final catalogAsync = ref.watch(homeCatalogProvider);
-    final historyAsync = ref.watch(watchHistoryControllerProvider);
+    final history = ref.watch(watchHistoryControllerProvider).valueOrNull ??
+        const <WatchProgressItem>[];
     final watchlistAsync = ref.watch(watchlistControllerProvider);
     final watchlistIds = {
       for (final m in watchlistAsync.valueOrNull ?? const <MediaItem>[]) m.id,
     };
+
+    final heroItems = catalogAsync.valueOrNull != null &&
+            catalogAsync.valueOrNull!.isNotEmpty
+        ? catalogAsync.valueOrNull!
+            .where((m) => (m.backdrop ?? '').isNotEmpty)
+            .take(5)
+            .toList()
+        : SeedCatalogData.heroItems;
+    final effectiveHeroes =
+        heroItems.isNotEmpty ? heroItems : SeedCatalogData.heroItems;
 
     return SafeArea(
       bottom: false,
@@ -72,34 +84,34 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ),
                 child: _HeroCarousel(
                   controller: _heroController,
-                  currentIndex: _heroPage,
-                  items: SeedCatalogData.heroItems,
+                  currentIndex: _heroPage.clamp(0, effectiveHeroes.length - 1),
+                  items: effectiveHeroes,
                   watchlistIds: watchlistIds,
                   onPageChanged: (idx) => setState(() => _heroPage = idx),
                   onWatch: (item) =>
-                      context.push('/player/${item.type}/${item.id}'),
+                      context.push('/detail/${item.type}/${item.id}'),
                   onToggleList: (item) => ref
                       .read(watchlistControllerProvider.notifier)
                       .toggle(item),
                 ),
               ),
             ),
-            const SliverToBoxAdapter(
-              child: SizedBox(height: AppSpacing.sectionGap),
-            ),
-            SliverToBoxAdapter(
-              child: SectionHeader(
-                title: l10n.continueWatching,
-                actionLabel: l10n.seeAll,
-                onActionTap: () => context.go('/library'),
+            if (history.isNotEmpty) ...[
+              const SliverToBoxAdapter(
+                child: SizedBox(height: AppSpacing.sectionGap),
               ),
-            ),
-            const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.md)),
-            SliverToBoxAdapter(
-              child: SizedBox(
-                height: 222,
-                child: historyAsync.when(
-                  data: (history) => ListView.separated(
+              SliverToBoxAdapter(
+                child: SectionHeader(
+                  title: l10n.continueWatching,
+                  actionLabel: l10n.seeAll,
+                  onActionTap: () => context.go('/library'),
+                ),
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.md)),
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height: 196,
+                  child: ListView.separated(
                     padding: const EdgeInsets.symmetric(
                       horizontal: AppSpacing.screenPadding,
                     ),
@@ -117,11 +129,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       );
                     },
                   ),
-                  loading: () => const _HorizontalSkeletonList(),
-                  error: (_, __) => const SizedBox.shrink(),
                 ),
               ),
-            ),
+            ],
             const SliverToBoxAdapter(
               child: SizedBox(height: AppSpacing.sectionGap),
             ),
@@ -135,10 +145,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.md)),
             SliverToBoxAdapter(
               child: SizedBox(
-                height: 186,
+                height: 168,
                 child: catalogAsync.when(
                   data: (items) {
-                    final trending = items.take(10).toList();
+                    final movies =
+                        items.where((e) => e.type == 'movie').take(15).toList();
+                    final trending =
+                        movies.isNotEmpty ? movies : items.take(15).toList();
                     return ListView.separated(
                       padding: const EdgeInsets.symmetric(
                         horizontal: AppSpacing.screenPadding,
@@ -151,6 +164,53 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         final item = trending[index];
                         return PosterCard(
                           item: item,
+                          width: 112,
+                          onTap: () =>
+                              context.push('/detail/${item.type}/${item.id}'),
+                        );
+                      },
+                    );
+                  },
+                  loading: () => const _HorizontalSkeletonList(),
+                  error: (_, __) => const SizedBox.shrink(),
+                ),
+              ),
+            ),
+            const SliverToBoxAdapter(
+              child: SizedBox(height: AppSpacing.sectionGap),
+            ),
+            SliverToBoxAdapter(
+              child: SectionHeader(
+                title: l10n.seriesGroup,
+                actionLabel: l10n.seeAll,
+                onActionTap: () => context.go('/search'),
+              ),
+            ),
+            const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.md)),
+            SliverToBoxAdapter(
+              child: SizedBox(
+                height: 168,
+                child: catalogAsync.when(
+                  data: (items) {
+                    final series = items
+                        .where((e) => e.type == 'series')
+                        .take(15)
+                        .toList();
+                    final list =
+                        series.isNotEmpty ? series : items.take(10).toList();
+                    return ListView.separated(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.screenPadding,
+                      ),
+                      scrollDirection: Axis.horizontal,
+                      itemCount: list.length,
+                      separatorBuilder: (_, __) =>
+                          const SizedBox(width: AppSpacing.md),
+                      itemBuilder: (context, index) {
+                        final item = list[index];
+                        return PosterCard(
+                          item: item,
+                          width: 112,
                           onTap: () =>
                               context.push('/detail/${item.type}/${item.id}'),
                         );
@@ -175,14 +235,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.md)),
             SliverToBoxAdapter(
               child: SizedBox(
-                height: 186,
+                height: 168,
                 child: catalogAsync.when(
                   data: (items) {
                     final releases =
                         items.where((e) => e.isNewRelease).toList();
                     final list = releases.isNotEmpty
                         ? releases
-                        : items.reversed.take(8).toList();
+                        : items.skip(5).take(12).toList();
                     return ListView.separated(
                       padding: const EdgeInsets.symmetric(
                         horizontal: AppSpacing.screenPadding,
@@ -195,6 +255,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         final item = list[index];
                         return PosterCard(
                           item: item,
+                          width: 112,
                           showNewBadge: true,
                           onTap: () =>
                               context.push('/detail/${item.type}/${item.id}'),
@@ -207,7 +268,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ),
               ),
             ),
-            const SliverToBoxAdapter(child: SizedBox(height: 110)),
+            const SliverToBoxAdapter(child: SizedBox(height: 92)),
           ],
         ),
       ),
@@ -225,9 +286,9 @@ class _HomeHeader extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.screenPadding,
-        AppSpacing.sm,
+        AppSpacing.xs,
         AppSpacing.screenPadding,
-        AppSpacing.md,
+        AppSpacing.sm,
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -239,8 +300,8 @@ class _HomeHeader extends StatelessWidget {
             child: GestureDetector(
               onTap: onAvatarTap,
               child: Container(
-                width: 38,
-                height: 38,
+                width: 34,
+                height: 34,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   border: Border.all(color: AppColors.line, width: 1.5),
@@ -251,7 +312,7 @@ class _HomeHeader extends StatelessWidget {
                 child: const Icon(
                   LucideIcons.user,
                   color: AppColors.text,
-                  size: 19,
+                  size: 17,
                 ),
               ),
             ),

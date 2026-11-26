@@ -227,7 +227,7 @@ void _showAboutDialog(BuildContext context) {
     context: context,
     builder: (ctx) => AlertDialog(
       backgroundColor: AppColors.surface,
-      title: const Text('MUVIO · v1.0.0', style: AppTypography.h1),
+      title: const Text('MUVIO · v1.0.1', style: AppTypography.h1),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,

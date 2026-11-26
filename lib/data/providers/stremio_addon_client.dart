@@ -64,11 +64,13 @@ class StremioAddonClient implements MediaProvider {
       }
 
       final isNuvio = map.containsKey('nuvioVersion') ||
+          map.containsKey('scrapers') ||
           map['protocol']?.toString().toLowerCase() == 'nuvio';
 
       final manifest = AddonManifest.fromJson(
         map,
         kind: isNuvio ? AddonKind.nuvio : AddonKind.stremio,
+        fallbackUrl: uri.toString(),
       );
       return Success(manifest);
     } on FormatException catch (e) {

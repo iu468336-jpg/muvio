@@ -27,7 +27,7 @@ void main() {
       );
       await tester.pumpAndSettle(const Duration(milliseconds: 500));
 
-      expect(find.text('Continuer à regarder'), findsOneWidget);
+      expect(find.text('Tendances'), findsOneWidget);
 
       await tester.tap(find.text('Recherche'));
       await tester.pumpAndSettle(const Duration(milliseconds: 400));

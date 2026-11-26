@@ -71,8 +71,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   double _brightnessLevel = 0.75;
   double _volumeLevel = 0.85;
 
-  Duration _position = const Duration(hours: 1, minutes: 24, seconds: 36);
-  Duration _duration = const Duration(hours: 2, minutes: 49);
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
   bool _isPlaying = true;
 
   Timer? _hideControlsTimer;
@@ -91,14 +91,17 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     final addons = ref.read(addonsControllerProvider).valueOrNull ??
         const <InstalledAddon>[];
     final catalogRepo = ref.read(catalogRepositoryProvider);
+    final rawId = Uri.decodeComponent(widget.mediaId);
+    final baseId = rawId.contains(':') ? rawId.split(':').first : rawId;
     final media = await catalogRepo.resolveMediaDetail(
-      mediaId: widget.mediaId,
+      mediaId: baseId,
       type: widget.mediaType,
       activeAddons: addons,
     );
     final streams = await catalogRepo.fetchStreamsForMedia(
       media: media,
       activeAddons: addons,
+      episodeVideoId: rawId.contains(':') ? rawId : null,
     );
 
     final history = ref.read(watchHistoryControllerProvider).valueOrNull ??
@@ -253,7 +256,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   Future<void> _saveProgressAndExit() async {
     final media = _media;
-    if (media != null) {
+    if (media != null && _activeStream != null && _position.inSeconds > 5) {
       await ref.read(watchHistoryControllerProvider.notifier).saveProgress(
             WatchProgressItem(
               media: media,

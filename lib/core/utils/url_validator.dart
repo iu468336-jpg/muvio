@@ -1,7 +1,8 @@
 import 'package:muvio/core/errors/result.dart';
 
 /// Validates addon manifest and resource URLs against SSRF, private IPs,
-/// non-HTTPS schemes, and unsafe protocols (`file://`, `javascript:`, etc.).
+/// and unsafe protocols (`file://`, `javascript:`, etc.), while normalizing
+/// user-entered URLs (missing scheme, `/configure`, `stremio://`, etc.).
 class UrlSecurityValidator {
   const UrlSecurityValidator._();
 
@@ -11,9 +12,22 @@ class UrlSecurityValidator {
       return const Failure(ValidationFailure('URL vide.'));
     }
 
+    final lower = trimmed.toLowerCase();
+    if (lower.startsWith('file:') ||
+        lower.startsWith('javascript:') ||
+        lower.startsWith('data:') ||
+        lower.startsWith('vbscript:') ||
+        lower.startsWith('http://')) {
+      return const Failure(
+        ValidationFailure('Seules les URLs HTTPS sécurisées sont autorisées.'),
+      );
+    }
+
     var normalized = trimmed;
-    if (normalized.startsWith('stremio://')) {
-      normalized = 'https://${normalized.substring('stremio://'.length)}';
+    if (lower.startsWith('stremio://')) {
+      normalized = 'https://${trimmed.substring('stremio://'.length)}';
+    } else if (!normalized.contains('://')) {
+      normalized = 'https://$normalized';
     }
 
     final uri = Uri.tryParse(normalized);
@@ -34,14 +48,20 @@ class UrlSecurityValidator {
       );
     }
 
-    if (!uri.path.endsWith('/manifest.json')) {
-      final cleanPath = uri.path.endsWith('/')
-          ? '${uri.path}manifest.json'
-          : '${uri.path}/manifest.json';
+    var path = uri.path;
+    if (path.endsWith('/configure/')) {
+      path = path.substring(0, path.length - '/configure/'.length);
+    } else if (path.endsWith('/configure')) {
+      path = path.substring(0, path.length - '/configure'.length);
+    }
+
+    if (!path.endsWith('.json')) {
+      final cleanPath =
+          path.endsWith('/') ? '${path}manifest.json' : '$path/manifest.json';
       return Success(uri.replace(path: cleanPath));
     }
 
-    return Success(uri);
+    return Success(uri.replace(path: path));
   }
 
   static bool isSafeStreamUrl(String rawUrl) {

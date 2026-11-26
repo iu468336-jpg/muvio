@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:muvio/core/errors/result.dart';
@@ -15,8 +16,8 @@ part 'addons_widgets.dart';
 
 /// Screen 2 — Addons & Plugins:
 /// Header "Addons" + red floating +, underlined tabs (Stremio Addons | Nuvio Plugins),
-/// "Ajouter un addon via URL" card with manifest validation & preview,
-/// addon cards with green Installé badge / red switch / red Installer outline button,
+/// "Ajouter un addon via URL" card with paste helper, manifest validation & preview,
+/// real Nuvio/Stremio base addons (Cinemeta + OpenSubtitles v3 installed, community directory),
 /// swipe-left to delete, tap to inspect raw manifest & capabilities.
 class AddonsScreen extends ConsumerStatefulWidget {
   const AddonsScreen({super.key});
@@ -30,6 +31,7 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
   final FocusNode _urlFocusNode = FocusNode();
   AddonKind _selectedTab = AddonKind.stremio;
   bool _loadingPreview = false;
+  String? _installingAddonId;
 
   @override
   void dispose() {
@@ -38,13 +40,29 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
     super.dispose();
   }
 
+  Future<void> _pasteFromClipboard() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text?.trim() ?? '';
+    if (text.isNotEmpty) {
+      setState(() => _urlController.text = text);
+    }
+  }
+
   Future<void> _validateAndPreviewUrl() async {
-    final url = _urlController.text.trim();
+    var url = _urlController.text.trim();
     if (url.isEmpty) {
-      _urlFocusNode.requestFocus();
-      return;
+      final clip = await Clipboard.getData(Clipboard.kTextPlain);
+      final clipText = clip?.text?.trim() ?? '';
+      if (clipText.startsWith('http') || clipText.startsWith('stremio://')) {
+        url = clipText;
+        _urlController.text = clipText;
+      } else {
+        _urlFocusNode.requestFocus();
+        return;
+      }
     }
 
+    FocusScope.of(context).unfocus();
     setState(() => _loadingPreview = true);
     final res =
         await ref.read(addonsControllerProvider.notifier).previewUrl(url);
@@ -61,6 +79,25 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
     }
   }
 
+  Future<void> _installProposed(InstalledAddon addon) async {
+    final l10n = AppLocalizations.of(context);
+    setState(() => _installingAddonId = addon.id);
+    final res = await ref
+        .read(addonsControllerProvider.notifier)
+        .toggleInstallProposed(addon);
+    if (!mounted) return;
+    setState(() => _installingAddonId = null);
+    if (res.isSuccess) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${addon.manifest.name} — ${l10n.addonInstalledSuccess}',
+          ),
+        ),
+      );
+    }
+  }
+
   Future<void> _showManifestPreviewSheet(
     String rawUrl,
     AddonManifest manifest,
@@ -71,63 +108,75 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
       backgroundColor: AppColors.surface,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.all(AppSpacing.screenPadding),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(l10n.manifestPreviewTitle, style: AppTypography.h1),
-            const SizedBox(height: AppSpacing.sm),
-            Text(
-              '${manifest.name} · v${manifest.version}',
-              style: AppTypography.h2.copyWith(color: AppColors.red),
-            ),
-            const SizedBox(height: AppSpacing.xs),
-            Text(manifest.description, style: AppTypography.body),
-            const SizedBox(height: AppSpacing.md),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final r in manifest.resources)
-                  Chip(
-                    backgroundColor: AppColors.surface2,
-                    label: Text(r, style: AppTypography.caption),
-                  ),
-                for (final t in manifest.types)
-                  Chip(
-                    backgroundColor: AppColors.surface2,
-                    label: Text('type:$t', style: AppTypography.caption),
-                  ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.of(ctx).pop(false),
-                    child: Text(l10n.cancel),
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.md),
-                Expanded(
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.red,
-                      foregroundColor: Colors.white,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.screenPadding),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(l10n.manifestPreviewTitle, style: AppTypography.h1),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                '${manifest.name} · v${manifest.version}',
+                style: AppTypography.h2.copyWith(color: AppColors.red),
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                manifest.description,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                style: AppTypography.body,
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final r in manifest.resources)
+                    Chip(
+                      visualDensity: VisualDensity.compact,
+                      backgroundColor: AppColors.surface2,
+                      label: Text(r, style: AppTypography.caption),
                     ),
-                    onPressed: () => Navigator.of(ctx).pop(true),
-                    child: Text(l10n.confirmInstall),
+                  for (final t in manifest.types)
+                    Chip(
+                      visualDensity: VisualDensity.compact,
+                      backgroundColor: AppColors.surface2,
+                      label: Text('type:$t', style: AppTypography.caption),
+                    ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(ctx).pop(false),
+                      child: Text(l10n.cancel),
+                    ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.md),
-          ],
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppColors.red,
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: () => Navigator.of(ctx).pop(true),
+                      child: Text(
+                        l10n.confirmInstall,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -137,11 +186,17 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
           .read(addonsControllerProvider.notifier)
           .installManifest(rawUrl: rawUrl, manifest: manifest);
       if (!mounted) return;
-      if (installRes.isSuccess) {
-        _urlController.clear();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.addonInstalledSuccess)),
-        );
+      switch (installRes) {
+        case Success<InstalledAddon>(:final value):
+          _urlController.clear();
+          setState(() => _selectedTab = value.manifest.kind);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(l10n.addonInstalledSuccess)),
+          );
+        case Failure<InstalledAddon>(:final failure):
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(failure.message)),
+          );
       }
     }
   }
@@ -154,7 +209,7 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
       backgroundColor: AppColors.surface,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) => DraggableScrollableSheet(
         expand: false,
@@ -164,39 +219,25 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
           controller: scrollController,
           padding: const EdgeInsets.all(AppSpacing.screenPadding),
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(addon.manifest.name, style: AppTypography.h1),
-                ),
-                Chip(
-                  backgroundColor: AppColors.surface2,
-                  label: Text('v${addon.manifest.version}'),
-                ),
-              ],
+            Text(
+              '${addon.manifest.name} · v${addon.manifest.version}',
+              style: AppTypography.h1,
             ),
             const SizedBox(height: AppSpacing.xs),
-            Text(addon.manifestUrl, style: AppTypography.caption),
-            const SizedBox(height: AppSpacing.md),
+            SelectableText(addon.manifestUrl, style: AppTypography.caption),
+            const SizedBox(height: AppSpacing.sm),
             Text(addon.manifest.description, style: AppTypography.body),
-            const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: AppSpacing.sm),
             Text(
               'Ressources: ${addon.manifest.resources.join(', ')}',
               style: AppTypography.bodyMedium,
             ),
-            const SizedBox(height: AppSpacing.xs),
-            Text(
-              'Catalogues (${addon.manifest.catalogs.length}): '
-              '${addon.manifest.catalogs.map((c) => '${c.name} [${c.type}]').join(', ')}',
-              style: AppTypography.caption,
-            ),
-            const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: AppSpacing.sm),
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
                 color: AppColors.bg,
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: AppColors.line),
               ),
               child: SelectableText(
@@ -226,7 +267,7 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
           Padding(
             padding: const EdgeInsets.fromLTRB(
               AppSpacing.screenPadding,
-              AppSpacing.sm,
+              AppSpacing.xs,
               AppSpacing.screenPadding,
               AppSpacing.sm,
             ),
@@ -238,30 +279,25 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
                   children: [
                     Text(
                       'MUVIO',
-                      style: AppTypography.logo.copyWith(fontSize: 20),
+                      style: AppTypography.logo.copyWith(fontSize: 17),
                     ),
-                    const SizedBox(height: 4),
                     Text(l10n.addonsTitle, style: AppTypography.display),
                   ],
                 ),
-                Semantics(
-                  button: true,
-                  label: l10n.addAddonByUrlTitle,
-                  child: InkWell(
-                    onTap: _urlFocusNode.requestFocus,
-                    borderRadius: BorderRadius.circular(AppSpacing.pillRadius),
-                    child: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: const BoxDecoration(
-                        color: AppColors.red,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        LucideIcons.plus,
-                        color: Colors.white,
-                        size: 24,
-                      ),
+                InkWell(
+                  onTap: _urlFocusNode.requestFocus,
+                  borderRadius: BorderRadius.circular(AppSpacing.pillRadius),
+                  child: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: const BoxDecoration(
+                      color: AppColors.red,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      LucideIcons.plus,
+                      color: Colors.white,
+                      size: 20,
                     ),
                   ),
                 ),
@@ -284,9 +320,9 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
                 return ListView.builder(
                   padding: const EdgeInsets.fromLTRB(
                     AppSpacing.screenPadding,
-                    AppSpacing.lg,
+                    AppSpacing.md,
                     AppSpacing.screenPadding,
-                    110,
+                    92,
                   ),
                   itemCount: filtered.length + 1,
                   itemBuilder: (context, index) {
@@ -297,6 +333,7 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
                           controller: _urlController,
                           focusNode: _urlFocusNode,
                           loading: _loadingPreview,
+                          onPaste: _pasteFromClipboard,
                           onSubmit: _validateAndPreviewUrl,
                         ),
                       );
@@ -310,7 +347,7 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
                         direction: DismissDirection.endToStart,
                         background: Container(
                           alignment: Alignment.centerRight,
-                          padding: const EdgeInsets.only(right: 24),
+                          padding: const EdgeInsets.only(right: 20),
                           decoration: BoxDecoration(
                             color: AppColors.redDeep,
                             borderRadius:
@@ -331,10 +368,9 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
                         },
                         child: _AddonTileCard(
                           addon: addon,
+                          installing: _installingAddonId == addon.id,
                           onTap: () => _showAddonDetailDialog(addon),
-                          onInstall: () => ref
-                              .read(addonsControllerProvider.notifier)
-                              .toggleInstallProposed(addon),
+                          onInstall: () => _installProposed(addon),
                           onToggleEnabled: (enabled) => ref
                               .read(addonsControllerProvider.notifier)
                               .toggleEnabled(addon, enabled: enabled),

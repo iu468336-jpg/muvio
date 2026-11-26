@@ -1,23 +1,23 @@
-/// Spacing, border radii, and layout constants across Muvio.
+/// Spacing, border radii, and compact mobile layout constants across Muvio.
 class AppSpacing {
   const AppSpacing._();
 
   static const double xs = 4;
   static const double sm = 8;
-  static const double md = 12;
-  static const double lg = 16;
-  static const double screenPadding = 20;
-  static const double xl = 24;
-  static const double sectionGap = 28;
-  static const double xxl = 36;
+  static const double md = 10;
+  static const double lg = 14;
+  static const double screenPadding = 16;
+  static const double xl = 20;
+  static const double sectionGap = 22;
+  static const double xxl = 30;
 
-  static const double gridGap = 16;
-  static const double cardRadius = 20;
-  static const double posterRadius = 12;
+  static const double gridGap = 12;
+  static const double cardRadius = 16;
+  static const double posterRadius = 10;
   static const double pillRadius = 999;
   static const double chipRadius = 999;
 
-  static const double bottomNavHeight = 64;
+  static const double bottomNavHeight = 58;
   static const double minTouchTarget = 44;
 }
 

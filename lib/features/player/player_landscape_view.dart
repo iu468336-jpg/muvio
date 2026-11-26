@@ -284,89 +284,105 @@ class _LandscapeFullscreenView extends StatelessWidget {
                       style:
                           AppTypography.caption.copyWith(color: Colors.white),
                     ),
-                    const Spacer(),
-                    IconButton(
-                      onPressed: () {
-                        // ignore: invalid_use_of_protected_member
-                        state.setState(
-                          () => state._subtitlesEnabled =
-                              !state._subtitlesEnabled,
-                        );
-                      },
-                      icon: Icon(
-                        Icons.closed_caption_off_outlined,
-                        color: state._subtitlesEnabled
-                            ? AppColors.red
-                            : Colors.white,
-                      ),
-                    ),
-                    TextButton.icon(
-                      onPressed: () {
-                        // ignore: invalid_use_of_protected_member
-                        state.setState(
-                          () => state._selectedAudioLabel =
-                              state._selectedAudioLabel == 'English'
-                                  ? 'Français'
-                                  : 'English',
-                        );
-                      },
-                      icon: const Icon(
-                        LucideIcons.volume2,
-                        size: 16,
-                        color: Colors.white,
-                      ),
-                      label: Text(
-                        state._selectedAudioLabel,
-                        style: AppTypography.caption.copyWith(
-                          color: Colors.white,
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        reverse: true,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () {
+                                // ignore: invalid_use_of_protected_member
+                                state.setState(
+                                  () => state._subtitlesEnabled =
+                                      !state._subtitlesEnabled,
+                                );
+                              },
+                              icon: Icon(
+                                Icons.closed_caption_off_outlined,
+                                color: state._subtitlesEnabled
+                                    ? AppColors.red
+                                    : Colors.white,
+                              ),
+                            ),
+                            TextButton.icon(
+                              onPressed: () {
+                                // ignore: invalid_use_of_protected_member
+                                state.setState(
+                                  () => state._selectedAudioLabel =
+                                      state._selectedAudioLabel == 'English'
+                                          ? 'Français'
+                                          : 'English',
+                                );
+                              },
+                              icon: const Icon(
+                                LucideIcons.volume2,
+                                size: 15,
+                                color: Colors.white,
+                              ),
+                              label: Text(
+                                state._selectedAudioLabel,
+                                style: AppTypography.caption.copyWith(
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                            _QualityChip(
+                              label: activeStream?.quality ?? '1080p',
+                              selected: true,
+                              onTap: () {},
+                            ),
+                            TextButton(
+                              onPressed: state._cycleSpeed,
+                              child: Text(
+                                '${state._playbackSpeed}x',
+                                style: AppTypography.caption.copyWith(
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () {
+                                // ignore: invalid_use_of_protected_member
+                                state.setState(
+                                  () => state._controlsLocked =
+                                      !state._controlsLocked,
+                                );
+                              },
+                              icon: Icon(
+                                state._controlsLocked
+                                    ? LucideIcons.lock
+                                    : LucideIcons.unlock,
+                                color: state._controlsLocked
+                                    ? AppColors.red
+                                    : Colors.white,
+                                size: 18,
+                              ),
+                            ),
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              onPressed: state._toggleOrientation,
+                              icon: const Icon(
+                                LucideIcons.smartphone,
+                                color: AppColors.red,
+                                size: 18,
+                              ),
+                            ),
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              onPressed: state._toggleOrientation,
+                              icon: const Icon(
+                                LucideIcons.maximize2,
+                                color: Colors.white,
+                                size: 18,
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                    ),
-                    _QualityChip(
-                      label: activeStream?.quality ?? '4K',
-                      selected: true,
-                      onTap: () {},
-                    ),
-                    TextButton(
-                      onPressed: state._cycleSpeed,
-                      child: Text(
-                        '${state._playbackSpeed}x',
-                        style: AppTypography.caption.copyWith(
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: () {
-                        // ignore: invalid_use_of_protected_member
-                        state.setState(
-                          () => state._controlsLocked = !state._controlsLocked,
-                        );
-                      },
-                      icon: Icon(
-                        state._controlsLocked
-                            ? LucideIcons.lock
-                            : LucideIcons.unlock,
-                        color: state._controlsLocked
-                            ? AppColors.red
-                            : Colors.white,
-                        size: 19,
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: state._toggleOrientation,
-                      icon: const Icon(
-                        LucideIcons.smartphone,
-                        color: AppColors.red,
-                        size: 19,
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: state._toggleOrientation,
-                      icon: const Icon(
-                        LucideIcons.maximize2,
-                        color: Colors.white,
-                        size: 19,
                       ),
                     ),
                   ],

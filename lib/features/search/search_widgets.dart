@@ -76,8 +76,8 @@ class _Top10RankPoster extends StatelessWidget {
       child: GestureDetector(
         onTap: onTap,
         child: SizedBox(
-          width: 142,
-          height: 196,
+          width: 126,
+          height: 172,
           child: Stack(
             clipBehavior: Clip.none,
             children: [
@@ -85,7 +85,7 @@ class _Top10RankPoster extends StatelessWidget {
                 right: 0,
                 top: 0,
                 bottom: 0,
-                width: 118,
+                width: 104,
                 child: Container(
                   decoration: BoxDecoration(
                     borderRadius:
@@ -95,25 +95,25 @@ class _Top10RankPoster extends StatelessWidget {
                   child: MuvioImage(
                     imageUrl: item.poster,
                     borderRadius: AppSpacing.posterRadius,
-                    memCacheWidth: 340,
+                    memCacheWidth: 320,
                   ),
                 ),
               ),
               Positioned(
                 left: -2,
-                bottom: -8,
+                bottom: -6,
                 child: Stack(
                   children: [
                     Text(
                       '$rank',
                       style: TextStyle(
                         fontFamily: AppTypography.fontFamily,
-                        fontSize: 108,
+                        fontSize: 84,
                         fontWeight: FontWeight.w900,
                         height: 1,
                         foreground: Paint()
                           ..style = PaintingStyle.stroke
-                          ..strokeWidth = 3.2
+                          ..strokeWidth = 2.8
                           ..color = AppColors.red,
                       ),
                     ),
@@ -121,7 +121,7 @@ class _Top10RankPoster extends StatelessWidget {
                       '$rank',
                       style: const TextStyle(
                         fontFamily: AppTypography.fontFamily,
-                        fontSize: 108,
+                        fontSize: 84,
                         fontWeight: FontWeight.w900,
                         height: 1,
                         color: Color(0xCC0A0A0A),

@@ -8,6 +8,8 @@ import 'package:muvio/data/providers/app_providers.dart';
 import 'package:muvio/l10n/app_localizations.dart';
 
 /// Root Muvio application widget bound to Riverpod settings, l10n, and GoRouter.
+/// Clamps Android system text scaling between 0.90 and 1.05 so menus and cards
+/// never look overly zoomed or overflow on compact phones.
 class MuvioApp extends ConsumerWidget {
   const MuvioApp({super.key});
 
@@ -32,6 +34,17 @@ class MuvioApp extends ConsumerWidget {
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
+      builder: (context, child) {
+        final mediaQuery = MediaQuery.of(context);
+        final clampedScaler = mediaQuery.textScaler.clamp(
+          minScaleFactor: 0.90,
+          maxScaleFactor: 1.05,
+        );
+        return MediaQuery(
+          data: mediaQuery.copyWith(textScaler: clampedScaler),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       routerConfig: router,
     );
   }

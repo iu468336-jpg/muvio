@@ -54,38 +54,38 @@ class ProfileScreen extends ConsumerWidget {
           Center(
             child: Column(
               children: [
-                Container(
-                  width: 112,
-                  height: 112,
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(color: AppColors.red, width: 3),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.red.withValues(alpha: 0.25),
-                        blurRadius: 24,
-                      ),
-                    ],
+            Container(
+              width: 84,
+              height: 84,
+              padding: const EdgeInsets.all(3),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: AppColors.red, width: 2.5),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.red.withValues(alpha: 0.22),
+                    blurRadius: 18,
                   ),
-                  child: DecoratedBox(
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: RadialGradient(
-                        colors: [AppColors.redDeep, AppColors.surface],
-                      ),
-                    ),
-                    child: Center(
-                      child: Text(
-                        'M',
-                        style: AppTypography.display.copyWith(fontSize: 42),
-                      ),
-                    ),
+                ],
+              ),
+              child: DecoratedBox(
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [AppColors.redDeep, AppColors.surface],
                   ),
                 ),
-                const SizedBox(height: 14),
-                Text(l10n.profileUser, style: AppTypography.h1),
-                const SizedBox(height: 8),
+                child: Center(
+                  child: Text(
+                    'M',
+                    style: AppTypography.display.copyWith(fontSize: 32),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(l10n.profileUser, style: AppTypography.h1),
+            const SizedBox(height: 6),
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 14,

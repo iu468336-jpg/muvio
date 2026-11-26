@@ -8,8 +8,9 @@ import 'package:muvio/data/models/addon_models.dart';
 import 'package:muvio/data/models/seed_catalog.dart';
 import 'package:muvio/data/providers/stremio_addon_client.dart';
 
-/// Manages installed Stremio addons, Nuvio plugins, manifest validation,
-/// persistence in Drift SQLite, and circuit-breaker health counters.
+/// Manages installed Stremio addons, Nuvio plugins, real network manifest
+/// installation, persistence in Drift SQLite, and migration away from legacy
+/// placeholder addons.
 class AddonRepository {
   AddonRepository({
     required AppDatabase db,
@@ -20,23 +21,52 @@ class AddonRepository {
   final AppDatabase _db;
   final MediaProvider _client;
 
+  static const String _migrationKey = 'real_addons_v2_migrated';
+  static const String _removedDefaultsKey = 'removed_default_addon_ids';
+
+  static const Set<String> _legacyFakeAddonIds = {
+    'org.muvio.realdebrid',
+    'org.muvio.trakt',
+    'org.muvio.yts',
+    'org.mediafusion.elfhosted',
+    'plugin.nuvio.plexbridge',
+    'plugin.nuvio.jellyfin',
+  };
+
   Future<List<InstalledAddon>> loadAddons() async {
+    await _migrateLegacyFakeDataIfNeeded();
+
     final rows = await _db.select(_db.addonEntries).get();
+    final removedIds = await _loadRemovedDefaultIds();
+    final defaults = SeedCatalogData.defaultProposedAddons();
+
     if (rows.isEmpty) {
-      final defaults = SeedCatalogData.defaultProposedAddons();
+      final initial = <InstalledAddon>[];
       for (final item in defaults) {
+        if (removedIds.contains(item.id)) continue;
         await _saveAddon(item);
+        initial.add(item);
       }
-      return defaults;
+      return initial;
     }
 
     final result = <InstalledAddon>[];
+    final existingIds = <String>{};
     for (final row in rows) {
+      if (_legacyFakeAddonIds.contains(row.id)) {
+        await removeAddon(row.id);
+        continue;
+      }
       try {
         final decoded = jsonDecode(row.manifestJson) as Map<String, dynamic>;
         final kind =
             decoded['kind'] == 'nuvio' ? AddonKind.nuvio : AddonKind.stremio;
-        final manifest = AddonManifest.fromJson(decoded, kind: kind);
+        final manifest = AddonManifest.fromJson(
+          decoded,
+          kind: kind,
+          fallbackUrl: row.manifestUrl,
+        );
+        existingIds.add(row.id);
         result.add(
           InstalledAddon(
             id: row.id,
@@ -54,6 +84,16 @@ class AddonRepository {
         // Ignore corrupted row safely
       }
     }
+
+    // Ensure Nuvio-style base addons (Cinemeta + OpenSubtitles v3 + directory)
+    // are present unless the user explicitly deleted them.
+    for (final def in defaults) {
+      if (!existingIds.contains(def.id) && !removedIds.contains(def.id)) {
+        await _saveAddon(def);
+        result.add(def);
+      }
+    }
+
     return result;
   }
 
@@ -82,11 +122,45 @@ class AddonRepository {
       installed: true,
       enabled: true,
       shortBadge: badge,
-      categoryLabel:
-          manifest.kind == AddonKind.nuvio ? 'Nuvio Plugin' : 'Films & Séries',
+      categoryLabel: manifest.kind == AddonKind.nuvio
+          ? 'Dépôt Nuvio'
+          : _inferCategoryLabel(manifest),
     );
     await _saveAddon(addon);
     return Success(addon);
+  }
+
+  /// Fetches the live `manifest.json` from the addon's real endpoint before
+  /// marking a proposed addon as installed, falling back to the embedded
+  /// verified manifest only if offline.
+  Future<Result<InstalledAddon>> installProposedAddon(
+    InstalledAddon proposed,
+  ) async {
+    final liveRes = await _client.fetchManifest(proposed.manifestUrl);
+    final updated = switch (liveRes) {
+      Success<AddonManifest>(:final value) => InstalledAddon(
+          id: value.id,
+          manifestUrl: proposed.manifestUrl,
+          manifest: value,
+          installed: true,
+          enabled: true,
+          accentColorHex: proposed.accentColorHex,
+          shortBadge: proposed.shortBadge,
+          categoryLabel: proposed.categoryLabel,
+        ),
+      Failure<AddonManifest>() => proposed.copyWith(
+          installed: true,
+          enabled: true,
+        ),
+    };
+
+    if (updated.id != proposed.id) {
+      await (_db.delete(_db.addonEntries)
+            ..where((t) => t.id.equals(proposed.id)))
+          .go();
+    }
+    await _saveAddon(updated);
+    return Success(updated);
   }
 
   Future<void> updateAddonState(InstalledAddon updated) async {
@@ -96,6 +170,15 @@ class AddonRepository {
   Future<void> removeAddon(String addonId) async {
     await (_db.delete(_db.addonEntries)..where((t) => t.id.equals(addonId)))
         .go();
+    final removed = await _loadRemovedDefaultIds();
+    if (removed.add(addonId)) {
+      await _db.into(_db.settingEntries).insertOnConflictUpdate(
+            SettingEntriesCompanion.insert(
+              key: _removedDefaultsKey,
+              value: jsonEncode(removed.toList()),
+            ),
+          );
+    }
   }
 
   Future<void> recordFailure(InstalledAddon addon) async {
@@ -106,6 +189,60 @@ class AddonRepository {
   Future<void> resetFailures(InstalledAddon addon) async {
     if (addon.failureCount == 0) return;
     await _saveAddon(addon.copyWith(failureCount: 0));
+  }
+
+  String _inferCategoryLabel(AddonManifest m) {
+    if (m.supportsResource('stream')) return 'Sources Vidéo';
+    if (m.supportsResource('subtitles')) return 'Sous-titres';
+    if (m.supportsResource('catalog')) return 'Catalogue & Métadonnées';
+    return 'Films & Séries';
+  }
+
+  Future<Set<String>> _loadRemovedDefaultIds() async {
+    final row = await (_db.select(_db.settingEntries)
+          ..where((t) => t.key.equals(_removedDefaultsKey)))
+        .getSingleOrNull();
+    if (row == null) return <String>{};
+    try {
+      final list = jsonDecode(row.value) as List<dynamic>;
+      return list.map((e) => e.toString()).toSet();
+    } catch (_) {
+      return <String>{};
+    }
+  }
+
+  Future<void> _migrateLegacyFakeDataIfNeeded() async {
+    final flag = await (_db.select(_db.settingEntries)
+          ..where((t) => t.key.equals(_migrationKey)))
+        .getSingleOrNull();
+    if (flag != null) return;
+
+    // Remove fake placeholder addons from v1.0.0
+    await (_db.delete(_db.addonEntries)
+          ..where((t) => t.id.isIn(_legacyFakeAddonIds.toList())))
+        .go();
+
+    // Update Cinemeta row if it still had the old "The Movie Database" fake title
+    await (_db.delete(_db.addonEntries)
+          ..where((t) => t.id.equals('com.linvo.cinemeta')))
+        .go();
+
+    // Purge fake pre-seeded "Continuer à regarder" rows (where lastStreamUrl is null)
+    await (_db.delete(_db.playbackEntries)
+          ..where((t) => t.lastStreamUrl.isNull()))
+        .go();
+
+    // Purge fake demo downloads from v1.0.0
+    await (_db.delete(_db.downloadEntries)
+          ..where((t) => t.id.isIn(const ['dl_dune2', 'dl_jw4', 'dl_batman'])))
+        .go();
+
+    await _db.into(_db.settingEntries).insertOnConflictUpdate(
+          SettingEntriesCompanion.insert(
+            key: _migrationKey,
+            value: 'true',
+          ),
+        );
   }
 
   Future<void> _saveAddon(InstalledAddon addon) async {

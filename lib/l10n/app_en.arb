@@ -93,7 +93,7 @@
   "openSourceCardTitle": "Muvio is open source",
   "openSourceCardBody": "Muvio is built by the community. Contribute, report issues, or suggest improvements on GitHub.",
   "viewOnGithub": "View on GitHub",
-  "versionFooter": "v1.0.0 · Open Source",
+  "versionFooter": "v1.0.1 · Open Source",
   "selectSourceTitle": "Select Source",
   "selectSourceSubtitle": "Choose a stream from your installed add-ons.",
   "sourcesCount": "Sources · {count} addons",
@@ -112,5 +112,5 @@
   "clearCache": "Clear cache",
   "cacheCleared": "Cache cleared successfully",
   "privacyNotice": "Zero telemetry, zero trackers, zero ads. Your data stays strictly on your device.",
-  "upToDate": "You are running the latest version (v1.0.0)."
+  "upToDate": "You are running the latest version (v1.0.1)."
 }

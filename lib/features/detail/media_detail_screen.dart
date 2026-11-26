@@ -82,7 +82,7 @@ class _MediaDetailScreenState extends ConsumerState<MediaDetailScreen> {
         physics: const BouncingScrollPhysics(),
         slivers: [
           SliverAppBar(
-            expandedHeight: 280,
+            expandedHeight: 240,
             pinned: true,
             backgroundColor: AppColors.bg,
             leading: IconButton(
@@ -104,7 +104,6 @@ class _MediaDetailScreenState extends ConsumerState<MediaDetailScreen> {
                         end: Alignment.bottomCenter,
                         colors: [
                           Color(0x55000000),
-                          Color(0x990A0A0A),
                           AppColors.bg,
                         ],
                       ),
@@ -147,7 +146,7 @@ class _MediaDetailScreenState extends ConsumerState<MediaDetailScreen> {
                                 Container(
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 7,
-                                    vertical: 3,
+                                    vertical: 2,
                                   ),
                                   decoration: BoxDecoration(
                                     color: AppColors.red,
@@ -155,9 +154,7 @@ class _MediaDetailScreenState extends ConsumerState<MediaDetailScreen> {
                                   ),
                                   child: Text(
                                     '★ ${item.rating.toStringAsFixed(1)}',
-                                    style: AppTypography.micro.copyWith(
-                                      letterSpacing: 0.3,
-                                    ),
+                                    style: AppTypography.micro,
                                   ),
                                 ),
                                 Text(
@@ -166,24 +163,22 @@ class _MediaDetailScreenState extends ConsumerState<MediaDetailScreen> {
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 10),
+                            const SizedBox(height: 8),
                             Wrap(
                               spacing: 6,
                               runSpacing: 6,
                               children: [
                                 for (final g in item.genres)
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 4,
+                                  Chip(
+                                    visualDensity: VisualDensity.compact,
+                                    backgroundColor: AppColors.surface2,
+                                    side: const BorderSide(
+                                      color: AppColors.line,
                                     ),
-                                    decoration: BoxDecoration(
-                                      color: AppColors.surface2,
-                                      borderRadius: BorderRadius.circular(999),
-                                      border: Border.all(color: AppColors.line),
+                                    label: Text(
+                                      g,
+                                      style: AppTypography.caption,
                                     ),
-                                    child:
-                                        Text(g, style: AppTypography.caption),
                                   ),
                               ],
                             ),
@@ -240,11 +235,7 @@ class _MediaDetailScreenState extends ConsumerState<MediaDetailScreen> {
                                 stream: _streams.first,
                               );
                           ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                '${l10n.downloadAction}: ${item.title}',
-                              ),
-                            ),
+                            SnackBar(content: Text(l10n.downloadAction)),
                           );
                         },
                         icon: const Icon(LucideIcons.download),
@@ -277,7 +268,7 @@ class _MediaDetailScreenState extends ConsumerState<MediaDetailScreen> {
                     for (final ep in item.episodes)
                       Container(
                         margin: const EdgeInsets.only(bottom: 10),
-                        padding: const EdgeInsets.all(14),
+                        padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
                           color: AppColors.surface,
                           borderRadius: BorderRadius.circular(14),
@@ -286,30 +277,19 @@ class _MediaDetailScreenState extends ConsumerState<MediaDetailScreen> {
                         child: Row(
                           children: [
                             Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'S${ep.season} · E${ep.episode} — ${ep.title}',
-                                    style: AppTypography.bodyMedium,
-                                  ),
-                                  if (ep.overview.isNotEmpty) ...[
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      ep.overview,
-                                      style: AppTypography.caption,
-                                    ),
-                                  ],
-                                ],
+                              child: Text(
+                                'S${ep.season} · E${ep.episode} — ${ep.title}',
+                                style: AppTypography.bodyMedium,
                               ),
                             ),
                             IconButton(
-                              onPressed: () => context
-                                  .push('/player/${item.type}/${item.id}'),
+                              onPressed: () => context.push(
+                                '/player/${item.type}/${Uri.encodeComponent(ep.id.isNotEmpty ? ep.id : '${item.id}:${ep.season}:${ep.episode}')}',
+                              ),
                               icon: const Icon(
                                 Icons.play_circle_fill,
                                 color: AppColors.red,
-                                size: 32,
+                                size: 30,
                               ),
                             ),
                           ],
@@ -319,7 +299,37 @@ class _MediaDetailScreenState extends ConsumerState<MediaDetailScreen> {
                   const SizedBox(height: AppSpacing.xl),
                   Text(l10n.availableStreams, style: AppTypography.h2),
                   const SizedBox(height: AppSpacing.sm),
-                  for (final stream in _streams)
+                  if (_streams.isEmpty)
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius:
+                            BorderRadius.circular(AppSpacing.cardRadius),
+                        border: Border.all(color: AppColors.line),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Aucune source active. Installez Torrentio, Comet ou MediaFusion dans Addons.',
+                              style: AppTypography.caption,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: AppColors.red,
+                              foregroundColor: Colors.white,
+                            ),
+                            onPressed: () => context.go('/addons'),
+                            child: Text(l10n.navAddons),
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    for (final stream in _streams)
                     Container(
                       margin: const EdgeInsets.only(bottom: 10),
                       padding: const EdgeInsets.all(14),

@@ -72,11 +72,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 
     final downloads = downloadsAsync.valueOrNull ?? const <DownloadTaskItem>[];
     final usedBytes = downloads.fold<int>(
-      (7.0 * 1024 * 1024 * 1024).round(),
+      0,
       (sum, d) => sum + d.downloadedBytes,
     );
     final usedGb = (usedBytes / (1024 * 1024 * 1024))
-        .toStringAsFixed(1)
+        .toStringAsFixed(2)
         .replaceAll('.', ',');
 
     return SafeArea(
@@ -257,24 +257,35 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                     ),
                   ),
                   const SizedBox(height: AppSpacing.md),
-                  for (final task in downloads)
+                  if (downloads.isEmpty)
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(
-                        AppSpacing.screenPadding,
-                        0,
-                        AppSpacing.screenPadding,
-                        AppSpacing.md,
+                      padding: const EdgeInsets.only(bottom: AppSpacing.md),
+                      child: EmptyStateCard(
+                        icon: LucideIcons.download,
+                        title: l10n.downloadsTab,
+                        subtitle:
+                            'Aucun téléchargement en cours. Lancez un téléchargement depuis la fiche d’un film ou d’une série.',
                       ),
-                      child: _DownloadRowCard(
-                        task: task,
-                        onTogglePause: () => ref
-                            .read(downloadsControllerProvider.notifier)
-                            .togglePause(task),
-                        onLongPressDelete: () => _confirmDeleteDownload(task),
-                        onOpenPlayer: () =>
-                            context.push('/player/movie/${task.mediaId}'),
+                    )
+                  else
+                    for (final task in downloads)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                          AppSpacing.screenPadding,
+                          0,
+                          AppSpacing.screenPadding,
+                          AppSpacing.md,
+                        ),
+                        child: _DownloadRowCard(
+                          task: task,
+                          onTogglePause: () => ref
+                              .read(downloadsControllerProvider.notifier)
+                              .togglePause(task),
+                          onLongPressDelete: () => _confirmDeleteDownload(task),
+                          onOpenPlayer: () =>
+                              context.push('/player/movie/${task.mediaId}'),
+                        ),
                       ),
-                    ),
                   Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: AppSpacing.screenPadding,

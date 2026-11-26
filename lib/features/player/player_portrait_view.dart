@@ -283,10 +283,29 @@ class _PortraitPlayerView extends StatelessWidget {
                   ),
                   const SizedBox(height: 10),
                   Expanded(
-                    child: ListView.separated(
-                      itemCount: state._streams.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 10),
-                      itemBuilder: (context, index) {
+                    child: state._streams.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  'Aucune source active pour ce titre.',
+                                  style: AppTypography.bodyMedium,
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  'Activez Torrentio, Comet ou MediaFusion dans l’onglet Addons.',
+                                  textAlign: TextAlign.center,
+                                  style: AppTypography.caption,
+                                ),
+                              ],
+                            ),
+                          )
+                        : ListView.separated(
+                            itemCount: state._streams.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: 10),
+                            itemBuilder: (context, index) {
                         final s = state._streams[index];
                         final selected = s.id == activeStream?.id;
                         return InkWell(

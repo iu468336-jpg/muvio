@@ -53,7 +53,7 @@ void main() {
       );
     });
 
-    test('converts stremio:// scheme to https:// and appends manifest.json',
+    test('converts stremio://, bare domains, and /configure to https manifest.json',
         () {
       final res = UrlSecurityValidator.validateAddonUrl(
         'stremio://torrentio.strem.fun',
@@ -61,6 +61,15 @@ void main() {
       expect(res.isSuccess, isTrue);
       expect(
         res.valueOrNull.toString(),
+        'https://torrentio.strem.fun/manifest.json',
+      );
+
+      final resBare = UrlSecurityValidator.validateAddonUrl(
+        'torrentio.strem.fun/configure',
+      );
+      expect(resBare.isSuccess, isTrue);
+      expect(
+        resBare.valueOrNull.toString(),
         'https://torrentio.strem.fun/manifest.json',
       );
     });
