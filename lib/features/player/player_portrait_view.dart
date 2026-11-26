@@ -284,7 +284,7 @@ class _PortraitPlayerView extends StatelessWidget {
                   const SizedBox(height: 10),
                   Expanded(
                     child: state._streams.isEmpty
-                        ? Center(
+                        ? const Center(
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
@@ -292,7 +292,7 @@ class _PortraitPlayerView extends StatelessWidget {
                                   'Aucune source active pour ce titre.',
                                   style: AppTypography.bodyMedium,
                                 ),
-                                const SizedBox(height: 6),
+                                SizedBox(height: 6),
                                 Text(
                                   'Activez Torrentio, Comet ou MediaFusion dans l’onglet Addons.',
                                   textAlign: TextAlign.center,

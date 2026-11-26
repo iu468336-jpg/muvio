@@ -52,6 +52,7 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
     var url = _urlController.text.trim();
     if (url.isEmpty) {
       final clip = await Clipboard.getData(Clipboard.kTextPlain);
+      if (!mounted) return;
       final clipText = clip?.text?.trim() ?? '';
       if (clipText.startsWith('http') || clipText.startsWith('stremio://')) {
         url = clipText;

@@ -310,7 +310,7 @@ class _MediaDetailScreenState extends ConsumerState<MediaDetailScreen> {
                       ),
                       child: Row(
                         children: [
-                          Expanded(
+                          const Expanded(
                             child: Text(
                               'Aucune source active. Installez Torrentio, Comet ou MediaFusion dans Addons.',
                               style: AppTypography.caption,
