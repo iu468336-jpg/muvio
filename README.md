@@ -49,8 +49,9 @@
 ## Installation sur Android
 
 1. Téléchargez le fichier APK correspondant à votre appareil depuis la page [**Releases**](https://github.com/iu468336-jpg/muvio/releases/latest) :
-   - **`muvio-v1.0.0-arm64-v8a.apk`** *(Recommandé — 99 % des smartphones Android récents)*
-   - `muvio-v1.0.0-armeabi-v7a.apk` *(Appareils 32-bit plus anciens)*
+   - **`muvio-v1.0.0-universal.apk`** *(Universelle — compatible avec TOUS les téléphones Android 32-bit & 64-bit)*
+   - **`muvio-v1.0.0-armeabi-v7a.apk`** *(Légère — téléphones Android 32-bit ARMv7)*
+   - `muvio-v1.0.0-arm64-v8a.apk` *(Téléphones Android 64-bit ARM64)*
    - `muvio-v1.0.0-x86_64.apk` *(Émulateurs / ChromeOS / PC Android)*
 2. Ouvrez le fichier `.apk` sur votre téléphone.
 3. Si Android le demande, activez **« Autoriser l'installation d'applications issues de cette source »** (*Sources inconnues*).
