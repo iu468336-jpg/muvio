@@ -73,10 +73,12 @@ class UrlSecurityValidator {
     if (uri == null) return false;
     final scheme = uri.scheme.toLowerCase();
     if (scheme != 'https' && scheme != 'http') return false;
-    if (scheme == 'http') {
-      return uri.host == '127.0.0.1' || uri.host == 'localhost';
+    final host = uri.host.toLowerCase();
+    if (host.isEmpty) return false;
+    if (host == '127.0.0.1' || host == 'localhost') {
+      return true;
     }
-    return !_isPrivateOrLocalHost(uri.host.toLowerCase());
+    return !_isPrivateOrLocalHost(host);
   }
 
   static bool _isPrivateOrLocalHost(String host) {

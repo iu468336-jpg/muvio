@@ -190,7 +190,11 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
       switch (installRes) {
         case Success<InstalledAddon>(:final value):
           _urlController.clear();
-          setState(() => _selectedTab = value.manifest.kind);
+          setState(
+            () => _selectedTab = value.manifest.supportsResource('stream')
+                ? AddonKind.stremio
+                : AddonKind.nuvio,
+          );
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(l10n.addonInstalledSuccess)),
           );
@@ -314,9 +318,17 @@ class _AddonsScreenState extends ConsumerState<AddonsScreen> {
           Expanded(
             child: addonsAsync.when(
               data: (allAddons) {
-                final filtered = allAddons
-                    .where((a) => a.manifest.kind == _selectedTab)
-                    .toList();
+                final filtered = _selectedTab == AddonKind.stremio
+                    ? allAddons
+                        .where((a) => a.manifest.supportsResource('stream'))
+                        .toList()
+                    : allAddons
+                        .where(
+                          (a) =>
+                              !a.manifest.supportsResource('stream') ||
+                              a.manifest.supportsResource('catalog'),
+                        )
+                        .toList();
 
                 return ListView.builder(
                   padding: const EdgeInsets.fromLTRB(

@@ -60,10 +60,10 @@ class AppLocalizationsFr extends AppLocalizations {
   String get addonsTitle => 'Addons';
 
   @override
-  String get stremioAddonsTab => 'Stremio Addons';
+  String get stremioAddonsTab => 'Sources Vidéo (Flux)';
 
   @override
-  String get nuvioPluginsTab => 'Nuvio Plugins';
+  String get nuvioPluginsTab => 'Catalogues & Sous-titres';
 
   @override
   String get addAddonByUrlTitle => 'Ajouter un addon via URL';
@@ -225,14 +225,14 @@ class AppLocalizationsFr extends AppLocalizations {
   String get viewOnGithub => 'Voir sur GitHub';
 
   @override
-  String get versionFooter => 'v1.0.0 · Open Source';
+  String get versionFooter => 'v1.0.2 · Open Source';
 
   @override
-  String get selectSourceTitle => 'Select Source';
+  String get selectSourceTitle => 'Choisir une source';
 
   @override
   String get selectSourceSubtitle =>
-      'Choose a stream from your installed add-ons.';
+      'Sélectionnez un flux depuis vos addons installés.';
 
   @override
   String sourcesCount(int count) {
@@ -266,5 +266,5 @@ class AppLocalizationsFr extends AppLocalizations {
       'Aucune télémétrie, aucun tracker, aucune publicité. Vos données restent strictement sur votre appareil.';
 
   @override
-  String get upToDate => 'Vous utilisez la dernière version (v1.0.0).';
+  String get upToDate => 'Vous utilisez la dernière version (v1.0.2).';
 }

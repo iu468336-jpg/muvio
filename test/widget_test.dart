@@ -27,6 +27,7 @@ class _FakeMediaProvider implements MediaProvider {
     required String catalogId,
     int skip = 0,
     String? searchQuery,
+    String? defaultExtra,
   }) async =>
       const Success([]);
 
@@ -248,7 +249,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     // Screen 3: Portrait player
-    expect(find.text('Select Source'), findsOneWidget);
+    expect(find.text('Choisir une source'), findsOneWidget);
     expect(find.text('Interstellar'), findsOneWidget);
 
     // Screen 7: Landscape fullscreen 16:9 player

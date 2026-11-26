@@ -11,23 +11,44 @@ class AddonCatalogDef {
     required this.name,
     this.genres = const [],
     this.searchSupported = false,
+    this.isSearchOnly = false,
+    this.defaultRequiredExtra,
   });
 
   factory AddonCatalogDef.fromJson(Map<String, dynamic> json) {
     final rawExtra = json['extra'];
     final genres = <String>[];
     var searchSupported = false;
+    var isSearchOnly = false;
+    String? defaultRequiredExtra;
 
     if (rawExtra is List) {
       for (final item in rawExtra) {
         if (item is Map<String, dynamic>) {
           final extraName = item['name']?.toString() ?? '';
+          final isRequired = item['isRequired'] == true;
+          final opts = item['options'] is List
+              ? (item['options'] as List)
+                  .where((o) => o != null)
+                  .map((o) => o.toString())
+                  .toList()
+              : const <String>[];
+
           if (extraName == 'search') {
             searchSupported = true;
+            if (isRequired) {
+              isSearchOnly = true;
+            }
           }
-          if (extraName == 'genre' && item['options'] is List) {
-            for (final opt in item['options'] as List) {
-              if (opt != null) genres.add(opt.toString());
+          if (extraName == 'genre' && opts.isNotEmpty) {
+            genres.addAll(opts);
+          }
+          if (isRequired && extraName != 'search') {
+            if (opts.isNotEmpty) {
+              defaultRequiredExtra =
+                  '$extraName=${Uri.encodeComponent(opts.first)}';
+            } else {
+              isSearchOnly = true;
             }
           }
         }
@@ -40,12 +61,33 @@ class AddonCatalogDef {
       if (supported.contains('search')) searchSupported = true;
     }
 
+    if (json['extraRequired'] is List) {
+      final req =
+          (json['extraRequired'] as List).map((e) => e.toString()).toList();
+      if (req.contains('search')) {
+        isSearchOnly = true;
+      } else if (req.contains('genre') && genres.isNotEmpty) {
+        defaultRequiredExtra = 'genre=${Uri.encodeComponent(genres.first)}';
+      } else if (req.isNotEmpty) {
+        isSearchOnly = true;
+      }
+    }
+
+    if (json['isSearchOnly'] == true) {
+      isSearchOnly = true;
+    }
+    if (json['defaultRequiredExtra'] is String) {
+      defaultRequiredExtra = json['defaultRequiredExtra'] as String;
+    }
+
     return AddonCatalogDef(
       type: json['type']?.toString() ?? 'movie',
       id: json['id']?.toString() ?? 'top',
       name: json['name']?.toString() ?? json['id']?.toString() ?? 'Catalog',
       genres: genres,
       searchSupported: searchSupported,
+      isSearchOnly: isSearchOnly,
+      defaultRequiredExtra: defaultRequiredExtra,
     );
   }
 
@@ -54,6 +96,10 @@ class AddonCatalogDef {
   final String name;
   final List<String> genres;
   final bool searchSupported;
+  final bool isSearchOnly;
+  final String? defaultRequiredExtra;
+
+  bool get showOnHome => !isSearchOnly;
 
   Map<String, dynamic> toJson() => {
         'type': type,
@@ -61,6 +107,8 @@ class AddonCatalogDef {
         'name': name,
         'genres': genres,
         'searchSupported': searchSupported,
+        'isSearchOnly': isSearchOnly,
+        'defaultRequiredExtra': defaultRequiredExtra,
       };
 }
 
@@ -107,6 +155,20 @@ class AddonManifest {
     }
 
     final resources = <String>[];
+    final prefixes = <String>{};
+    final typesSet = <String>{};
+
+    if (json['types'] is List) {
+      for (final t in json['types'] as List) {
+        if (t != null) typesSet.add(t.toString());
+      }
+    }
+    if (json['idPrefixes'] is List) {
+      for (final p in json['idPrefixes'] as List) {
+        if (p != null) prefixes.add(p.toString());
+      }
+    }
+
     final rawResources = json['resources'] ?? json['capabilities'];
     if (rawResources is List) {
       for (final res in rawResources) {
@@ -114,17 +176,20 @@ class AddonManifest {
           resources.add(res);
         } else if (res is Map<String, dynamic> && res['name'] != null) {
           resources.add(res['name'].toString());
+          if (res['types'] is List) {
+            for (final rt in res['types'] as List) {
+              if (rt != null) typesSet.add(rt.toString());
+            }
+          }
+          if (res['idPrefixes'] is List) {
+            for (final rp in res['idPrefixes'] as List) {
+              if (rp != null) prefixes.add(rp.toString());
+            }
+          }
         }
       }
     } else if (isScraperRepo) {
       resources.add('stream');
-    }
-
-    final types = <String>[];
-    if (json['types'] is List) {
-      for (final t in json['types'] as List) {
-        if (t != null) types.add(t.toString());
-      }
     }
 
     var description = json['description']?.toString() ?? '';
@@ -148,13 +213,6 @@ class AddonManifest {
       }
     }
 
-    final prefixes = <String>[];
-    if (json['idPrefixes'] is List) {
-      for (final p in json['idPrefixes'] as List) {
-        if (p != null) prefixes.add(p.toString());
-      }
-    }
-
     final hints = json['behaviorHints'] is Map<String, dynamic>
         ? json['behaviorHints'] as Map<String, dynamic>
         : const <String, dynamic>{};
@@ -165,9 +223,9 @@ class AddonManifest {
       name: name,
       description: description,
       resources: resources,
-      types: types.isEmpty ? const ['movie', 'series'] : types,
+      types: typesSet.isEmpty ? const ['movie', 'series'] : typesSet.toList(),
       catalogs: catalogs,
-      idPrefixes: prefixes,
+      idPrefixes: prefixes.toList(),
       logo: json['logo']?.toString() ?? json['icon']?.toString(),
       background: json['background']?.toString(),
       behaviorHints: hints,
@@ -189,6 +247,11 @@ class AddonManifest {
   final AddonKind kind;
 
   bool supportsResource(String resource) => resources.contains(resource);
+
+  bool matchesIdPrefix(String mediaId) {
+    if (idPrefixes.isEmpty) return true;
+    return idPrefixes.any(mediaId.startsWith);
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -231,8 +294,8 @@ class InstalledAddon {
   final String shortBadge;
   final String categoryLabel;
 
-  /// Circuit breaker: addon marked offline after 3 consecutive failures.
-  bool get isOffline => failureCount >= 3;
+  /// Circuit breaker: addon marked offline after 5 consecutive failures.
+  bool get isOffline => failureCount >= 5;
 
   String get baseUrl {
     if (manifestUrl.endsWith('/manifest.json')) {

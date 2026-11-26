@@ -24,8 +24,8 @@
     }
   },
   "addonsTitle": "Addons",
-  "stremioAddonsTab": "Stremio Addons",
-  "nuvioPluginsTab": "Nuvio Plugins",
+  "stremioAddonsTab": "Sources Vidéo (Flux)",
+  "nuvioPluginsTab": "Catalogues & Sous-titres",
   "addAddonByUrlTitle": "Ajouter un addon via URL",
   "addAddonByUrlSubtitle": "Entrez l'URL d'un addon Stremio pour l'installer.",
   "addAddonHint": "https://exemple.com/manifest.json",
@@ -93,9 +93,9 @@
   "openSourceCardTitle": "Muvio est open source",
   "openSourceCardBody": "Muvio est développé par la communauté. Contribuez, signalez des problèmes ou proposez des améliorations sur GitHub.",
   "viewOnGithub": "Voir sur GitHub",
-  "versionFooter": "v1.0.1 · Open Source",
-  "selectSourceTitle": "Select Source",
-  "selectSourceSubtitle": "Choose a stream from your installed add-ons.",
+  "versionFooter": "v1.0.2 · Open Source",
+  "selectSourceTitle": "Choisir une source",
+  "selectSourceSubtitle": "Sélectionnez un flux depuis vos addons installés.",
   "sourcesCount": "Sources · {count} addons",
   "@sourcesCount": {
     "placeholders": {
@@ -112,5 +112,5 @@
   "clearCache": "Vider le cache",
   "cacheCleared": "Cache vidé avec succès",
   "privacyNotice": "Aucune télémétrie, aucun tracker, aucune publicité. Vos données restent strictement sur votre appareil.",
-  "upToDate": "Vous utilisez la dernière version (v1.0.1)."
+  "upToDate": "Vous utilisez la dernière version (v1.0.2)."
 }

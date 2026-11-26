@@ -8,9 +8,8 @@ import 'package:muvio/data/models/addon_models.dart';
 import 'package:muvio/data/models/seed_catalog.dart';
 import 'package:muvio/data/providers/stremio_addon_client.dart';
 
-/// Manages installed Stremio addons, Nuvio plugins, real network manifest
-/// installation, persistence in Drift SQLite, and migration away from legacy
-/// placeholder addons.
+/// Manages installed Stremio addons, real network manifest installation,
+/// persistence in Drift SQLite, and migration away from legacy/broken addons.
 class AddonRepository {
   AddonRepository({
     required AppDatabase db,
@@ -21,16 +20,22 @@ class AddonRepository {
   final AppDatabase _db;
   final MediaProvider _client;
 
-  static const String _migrationKey = 'real_addons_v2_migrated';
+  static const String _migrationKey = 'real_addons_v3_migrated';
   static const String _removedDefaultsKey = 'removed_default_addon_ids';
 
-  static const Set<String> _legacyFakeAddonIds = {
+  /// Obsolete fake or unconfigured 403/JS-only directory entries to purge automatically.
+  static const Set<String> _legacyOrBrokenAddonIds = {
     'org.muvio.realdebrid',
     'org.muvio.trakt',
     'org.muvio.yts',
     'org.mediafusion.elfhosted',
     'plugin.nuvio.plexbridge',
     'plugin.nuvio.jellyfin',
+    'comet.elfhosted.com',
+    'stremio.addons.mediafusion|elfhosted',
+    'nuvio.raw_githubusercontent_com.all.in.one.nuvio',
+    'nuvio.raw_githubusercontent_com.yoru.s.repo',
+    'com.linvo.stremiochannels',
   };
 
   Future<List<InstalledAddon>> loadAddons() async {
@@ -52,9 +57,14 @@ class AddonRepository {
 
     final result = <InstalledAddon>[];
     final existingIds = <String>{};
+    final existingUrls = <String>{};
+
     for (final row in rows) {
-      if (_legacyFakeAddonIds.contains(row.id)) {
-        await removeAddon(row.id);
+      if (_legacyOrBrokenAddonIds.contains(row.id) ||
+          row.manifestUrl.contains('raw.githubusercontent.com/NuvioPlugin') ||
+          row.manifestUrl.contains('raw.githubusercontent.com/yoruix')) {
+        await (_db.delete(_db.addonEntries)..where((t) => t.id.equals(row.id)))
+            .go();
         continue;
       }
       try {
@@ -67,6 +77,7 @@ class AddonRepository {
           fallbackUrl: row.manifestUrl,
         );
         existingIds.add(row.id);
+        existingUrls.add(row.manifestUrl);
         result.add(
           InstalledAddon(
             id: row.id,
@@ -74,7 +85,9 @@ class AddonRepository {
             manifest: manifest,
             installed: row.installed,
             enabled: row.enabled,
-            failureCount: row.failureCount,
+            // Clear stale circuit-breaker failures on app startup so temporary
+            // network drops never permanently silence an installed addon.
+            failureCount: 0,
             accentColorHex: row.accentColorHex,
             shortBadge: row.shortBadge,
             categoryLabel: row.categoryLabel,
@@ -85,10 +98,11 @@ class AddonRepository {
       }
     }
 
-    // Ensure Nuvio-style base addons (Cinemeta + OpenSubtitles v3 + directory)
-    // are present unless the user explicitly deleted them.
+    // Ensure verified base & directory addons are available unless user removed them.
     for (final def in defaults) {
-      if (!existingIds.contains(def.id) && !removedIds.contains(def.id)) {
+      if (!existingIds.contains(def.id) &&
+          !existingUrls.contains(def.manifestUrl) &&
+          !removedIds.contains(def.id)) {
         await _saveAddon(def);
         result.add(def);
       }
@@ -122,9 +136,7 @@ class AddonRepository {
       installed: true,
       enabled: true,
       shortBadge: badge,
-      categoryLabel: manifest.kind == AddonKind.nuvio
-          ? 'Dépôt Nuvio'
-          : _inferCategoryLabel(manifest),
+      categoryLabel: _inferCategoryLabel(manifest),
     );
     await _saveAddon(addon);
     return Success(addon);
@@ -151,6 +163,7 @@ class AddonRepository {
       Failure<AddonManifest>() => proposed.copyWith(
           installed: true,
           enabled: true,
+          failureCount: 0,
         ),
     };
 
@@ -192,6 +205,9 @@ class AddonRepository {
   }
 
   String _inferCategoryLabel(AddonManifest m) {
+    if (m.supportsResource('stream') && m.supportsResource('catalog')) {
+      return 'Catalogue & Sources Vidéo';
+    }
     if (m.supportsResource('stream')) return 'Sources Vidéo';
     if (m.supportsResource('subtitles')) return 'Sous-titres';
     if (m.supportsResource('catalog')) return 'Catalogue & Métadonnées';
@@ -217,25 +233,24 @@ class AddonRepository {
         .getSingleOrNull();
     if (flag != null) return;
 
-    // Remove fake placeholder addons from v1.0.0
+    // Remove legacy fake or unconfigured 403/0-stream addons
     await (_db.delete(_db.addonEntries)
-          ..where((t) => t.id.isIn(_legacyFakeAddonIds.toList())))
+          ..where((t) => t.id.isIn(_legacyOrBrokenAddonIds.toList())))
         .go();
 
-    // Update Cinemeta row if it still had the old "The Movie Database" fake title
-    await (_db.delete(_db.addonEntries)
-          ..where((t) => t.id.equals('com.linvo.cinemeta')))
-        .go();
-
-    // Purge fake pre-seeded "Continuer à regarder" rows (where lastStreamUrl is null)
+    // Purge any fake pre-seeded "Continuer à regarder" rows
     await (_db.delete(_db.playbackEntries)
           ..where((t) => t.lastStreamUrl.isNull()))
         .go();
 
-    // Purge fake demo downloads from v1.0.0
+    // Purge fake demo downloads
     await (_db.delete(_db.downloadEntries)
           ..where((t) => t.id.isIn(const ['dl_dune2', 'dl_jw4', 'dl_batman'])))
         .go();
+
+    // Reset all failureCount counters so existing addons work fresh
+    await (_db.update(_db.addonEntries))
+        .write(const AddonEntriesCompanion(failureCount: Value(0)));
 
     await _db.into(_db.settingEntries).insertOnConflictUpdate(
           SettingEntriesCompanion.insert(

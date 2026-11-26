@@ -149,11 +149,49 @@ class _LandscapeFullscreenView extends StatelessWidget {
           ),
           if (!state._controlsLocked)
             Center(
-              child: _GlassTransportRow(
-                isPlaying: state._isPlaying,
-                onRewind: () => state._seekRelative(-10),
-                onPlayPause: state._togglePlayPause,
-                onForward: () => state._seekRelative(10),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (state._isBuffering && activeStream != null)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 10),
+                      child: SizedBox(
+                        width: 28,
+                        height: 28,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          color: AppColors.red,
+                        ),
+                      ),
+                    ),
+                  _GlassTransportRow(
+                    isPlaying: state._isPlaying,
+                    onRewind: () => state._seekRelative(-10),
+                    onPlayPause: state._togglePlayPause,
+                    onForward: () => state._seekRelative(10),
+                  ),
+                  if (state._statusBanner != null) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.72),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: AppColors.line),
+                      ),
+                      child: Text(
+                        state._statusBanner!,
+                        style: AppTypography.caption.copyWith(
+                          color: Colors.white,
+                          fontSize: 11.5,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
           if (state._showSourcesOverlay && !state._controlsLocked)

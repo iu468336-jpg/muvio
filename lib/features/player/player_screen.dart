@@ -12,7 +12,6 @@ import 'package:muvio/core/theme/app_colors.dart';
 import 'package:muvio/core/theme/app_spacing.dart';
 import 'package:muvio/core/theme/app_typography.dart';
 import 'package:muvio/core/utils/formatters.dart';
-import 'package:muvio/data/models/addon_models.dart';
 import 'package:muvio/data/models/app_settings.dart';
 import 'package:muvio/data/models/media_models.dart';
 import 'package:muvio/data/providers/app_providers.dart';
@@ -25,14 +24,7 @@ part 'player_landscape_view.dart';
 part 'player_controls.dart';
 
 /// Screens 3 & 7 — Portrait Video Player + Fullscreen Landscape 16:9 Player:
-/// Powered by `media_kit` (libmpv) + `libtorrent4j` HTTP progressive stream bridge.
-/// Supports:
-/// - Exact-second resume & automatic watch-history saving
-/// - Portrait layout with "Select Source" bottom panel (Screen 3)
-/// - Fullscreen 16:9 landscape layout with auto-hidden controls after 3s,
-///   LIVE badge, Torrentio · 4K chip, floating "Sources · 3 addons" panel,
-///   speed (0.5x–2x), audio/subtitle track picker, control lock, PiP, and
-///   touch gestures (double-tap ±10s, vertical brightness/volume, pinch zoom, swipe down).
+/// Powered by `media_kit` (`libmpv`) + `libtorrent4j` piece-accurate HTTP stream bridge.
 class PlayerScreen extends ConsumerStatefulWidget {
   const PlayerScreen({
     required this.mediaType,
@@ -63,9 +55,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   bool _isLandscapeMode = false;
   bool _controlsVisible = true;
   bool _controlsLocked = false;
-  bool _showSourcesOverlay = true;
+  bool _showSourcesOverlay = false;
   bool _subtitlesEnabled = true;
-  String _selectedAudioLabel = 'English';
+  bool _isBuffering = true;
+  String? _statusBanner;
+  TorrentStreamTelemetry _telemetry = const TorrentStreamTelemetry();
+  int _sessionToken = 0;
+
+  String _selectedAudioLabel = 'Audio';
   double _playbackSpeed = 1;
   double _zoomScale = 1;
   double _brightnessLevel = 0.75;
@@ -76,9 +73,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   bool _isPlaying = true;
 
   Timer? _hideControlsTimer;
+  Timer? _telemetryTimer;
   StreamSubscription<Duration>? _posSub;
   StreamSubscription<Duration>? _durSub;
   StreamSubscription<bool>? _playSub;
+  StreamSubscription<bool>? _bufSub;
+  StreamSubscription<String>? _errSub;
 
   @override
   void initState() {
@@ -87,12 +87,30 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     _initPlayerAndCatalog();
   }
 
+  String _extractBaseMediaId(String rawId) {
+    if (rawId.startsWith('kitsu:')) {
+      final parts = rawId.split(':');
+      return parts.length >= 2 ? '${parts[0]}:${parts[1]}' : rawId;
+    }
+    if (rawId.startsWith('tmdb:')) {
+      final parts = rawId.split(':');
+      return parts.length >= 2 ? '${parts[0]}:${parts[1]}' : rawId;
+    }
+    if (rawId.contains(':')) {
+      return rawId.split(':').first;
+    }
+    return rawId;
+  }
+
+  bool _isEpisodeVideoId(String rawId, String baseId) => rawId != baseId;
+
   Future<void> _initPlayerAndCatalog() async {
-    final addons = ref.read(addonsControllerProvider).valueOrNull ??
-        const <InstalledAddon>[];
+    final addons = await ref.read(addonsControllerProvider.future);
     final catalogRepo = ref.read(catalogRepositoryProvider);
     final rawId = Uri.decodeComponent(widget.mediaId);
-    final baseId = rawId.contains(':') ? rawId.split(':').first : rawId;
+    final baseId = _extractBaseMediaId(rawId);
+    final isEp = _isEpisodeVideoId(rawId, baseId);
+
     final media = await catalogRepo.resolveMediaDetail(
       mediaId: baseId,
       type: widget.mediaType,
@@ -101,7 +119,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     final streams = await catalogRepo.fetchStreamsForMedia(
       media: media,
       activeAddons: addons,
-      episodeVideoId: rawId.contains(':') ? rawId : null,
+      episodeVideoId: isEp ? rawId : null,
     );
 
     final history = ref.read(watchHistoryControllerProvider).valueOrNull ??
@@ -122,6 +140,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       _media = media;
       _streams = streams;
       _activeStream = chosen;
+      _isBuffering = chosen != null;
     });
 
     if (widget.enableNativePlayer && chosen != null) {
@@ -131,12 +150,23 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   }
 
   Future<void> _setupMediaKit(StreamSource source) async {
+    final token = ++_sessionToken;
+    _telemetryTimer?.cancel();
+    setState(() {
+      _isBuffering = true;
+      _statusBanner = source.isTorrent
+          ? 'Connexion aux pairs et préparation du flux…'
+          : 'Ouverture du flux vidéo…';
+      _telemetry = const TorrentStreamTelemetry();
+    });
+
     try {
       final settings = ref.read(appSettingsControllerProvider).valueOrNull ??
           const AppSettings();
       _player ??= Player(
         configuration: const PlayerConfiguration(
           title: 'Muvio Player',
+          bufferSize: 32 * 1024 * 1024,
         ),
       );
       _videoController ??= VideoController(
@@ -147,24 +177,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         ),
       );
 
-      var playableUrl = source.url;
-      if (source.isTorrent) {
-        final resolved =
-            await ref.read(torrentEngineBridgeProvider).resolveMagnetOrInfoHash(
-                  magnetOrUrl: source.url,
-                  infoHash: source.infoHash,
-                  fileIdx: source.fileIdx,
-                );
-        playableUrl = resolved.valueOrNull ?? source.url;
-      }
-
       await _posSub?.cancel();
       await _durSub?.cancel();
       await _playSub?.cancel();
+      await _bufSub?.cancel();
+      await _errSub?.cancel();
 
       _posSub = _player!.stream.position.listen((pos) {
         if (mounted && pos.inSeconds > 0) {
-          setState(() => _position = pos);
+          setState(() {
+            _position = pos;
+            _isBuffering = false;
+            _statusBanner = null;
+          });
         }
       });
       _durSub = _player!.stream.duration.listen((dur) {
@@ -177,22 +202,115 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           setState(() => _isPlaying = playing);
         }
       });
+      _bufSub = _player!.stream.buffering.listen((buffering) {
+        if (mounted) {
+          setState(() => _isBuffering = buffering);
+        }
+      });
+      _errSub = _player!.stream.error.listen((err) {
+        if (mounted && err.trim().isNotEmpty) {
+          setState(() {
+            _statusBanner = 'Erreur flux : essayez une autre source ci-dessous';
+            _isBuffering = false;
+          });
+        }
+      });
 
-      await _player!.open(Media(playableUrl));
-      if (_position.inSeconds > 5) {
+      var playableUrl = source.url;
+      if (source.isTorrent) {
+        final resolved = await _torrentBridge.resolveMagnetOrInfoHash(
+          magnetOrUrl: source.url,
+          infoHash: source.infoHash,
+          fileIdx: source.fileIdx,
+          sources: source.sources,
+        );
+        if (!mounted || token != _sessionToken) return;
+        final localUrl = resolved.valueOrNull;
+        if (localUrl == null) {
+          setState(() {
+            _isBuffering = false;
+            _statusBanner = 'Impossible de démarrer le moteur torrent.';
+          });
+          return;
+        }
+        playableUrl = localUrl;
+
+        // Wait until metadata + initial header pieces are verified BEFORE opening mpv!
+        final ready = await _waitUntilTorrentReady(token);
+        if (!mounted || token != _sessionToken) return;
+        if (!ready) {
+          setState(() {
+            _isBuffering = false;
+            _statusBanner =
+                'Trop peu de pairs actifs sur cette source. Choisissez une source 1080p plus populaire.';
+          });
+          return;
+        }
+
+        _telemetryTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
+          final snap = await _torrentBridge.pollTelemetry();
+          if (mounted && token == _sessionToken) {
+            setState(() => _telemetry = snap);
+          }
+        });
+      }
+
+      final headers = <String, String>{
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 14; Mobile) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/131.0.0.0 Mobile Safari/537.36',
+        ...source.httpHeaders,
+      };
+
+      await _player!.open(
+        Media(playableUrl, httpHeaders: headers),
+      );
+      if (_position.inSeconds > 5 && !source.isTorrent) {
         await _player!.seek(_position);
       }
       await _player!.setRate(_playbackSpeed);
+      if (mounted && token == _sessionToken) {
+        setState(() => _statusBanner = null);
+      }
     } catch (_) {
-      // Safe fallback in headless test/CI environments without libmpv GPU surface
+      if (mounted && token == _sessionToken) {
+        setState(() {
+          _isBuffering = false;
+        });
+      }
     }
+  }
+
+  Future<bool> _waitUntilTorrentReady(int token) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 40));
+    while (mounted && token == _sessionToken && DateTime.now().isBefore(deadline)) {
+      final snap = await _torrentBridge.pollTelemetry();
+      if (!mounted || token != _sessionToken) return false;
+
+      final speedKb = (snap.downloadSpeedBytesPerSec / 1024).round();
+      final msg = !snap.hasMetadata
+          ? 'Recherche des pairs (${snap.peers} connectés)…'
+          : 'Mise en mémoire tampon (${(snap.bufferedBytes / (1024 * 1024)).toStringAsFixed(1)} Mo · $speedKb Ko/s · ${snap.peers} pairs)…';
+
+      setState(() {
+        _telemetry = snap;
+        _statusBanner = msg;
+      });
+
+      if (snap.readyToPlay) {
+        return true;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+    final lastSnap = await _torrentBridge.pollTelemetry();
+    return lastSnap.hasMetadata && lastSnap.bufferedBytes > 0;
   }
 
   void _scheduleAutoHide() {
     _hideControlsTimer?.cancel();
     if (!_isLandscapeMode) return;
     _hideControlsTimer = Timer(AppDurations.controlsAutoHide, () {
-      if (mounted && _isPlaying) {
+      if (mounted && _isPlaying && !_isBuffering) {
         setState(() => _controlsVisible = false);
       }
     });
@@ -240,7 +358,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   }
 
   Future<void> _switchStream(StreamSource stream) async {
-    setState(() => _activeStream = stream);
+    setState(() {
+      _activeStream = stream;
+      _position = Duration.zero;
+    });
     if (widget.enableNativePlayer) {
       await _setupMediaKit(stream);
     }
@@ -255,6 +376,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   }
 
   Future<void> _saveProgressAndExit() async {
+    _sessionToken++;
+    _telemetryTimer?.cancel();
     final media = _media;
     if (media != null && _activeStream != null && _position.inSeconds > 5) {
       await ref.read(watchHistoryControllerProvider.notifier).saveProgress(
@@ -279,10 +402,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   @override
   void dispose() {
+    _sessionToken++;
     _hideControlsTimer?.cancel();
+    _telemetryTimer?.cancel();
     _posSub?.cancel();
     _durSub?.cancel();
     _playSub?.cancel();
+    _bufSub?.cancel();
+    _errSub?.cancel();
     _player?.dispose();
     _torrentBridge.stopAllStreams();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);

@@ -17,6 +17,7 @@ abstract interface class MediaProvider {
     required String catalogId,
     int skip = 0,
     String? searchQuery,
+    String? defaultExtra,
   });
 
   Future<Result<MediaItem>> fetchMeta({
@@ -41,11 +42,17 @@ abstract interface class MediaProvider {
 }
 
 /// Official Stremio protocol HTTP client with strict JSON validation,
-/// URL safety checks, and Nuvio plugin manifest fallback parsing.
+/// URL safety checks, extra parameter support, and proper colon-safe ID encoding.
 class StremioAddonClient implements MediaProvider {
   const StremioAddonClient(this._dio);
 
   final Dio _dio;
+
+  /// Encodes path IDs while keeping `:` literal (`tt2788316:1:1`, `kitsu:7442:1`, `tmdb:1726`)
+  /// because several Stremio addon routers fail on `%3A`.
+  String _encodeStremioPathId(String rawId) {
+    return Uri.encodeComponent(rawId).replaceAll('%3A', ':');
+  }
 
   @override
   Future<Result<AddonManifest>> fetchManifest(String rawManifestUrl) async {
@@ -63,8 +70,16 @@ class StremioAddonClient implements MediaProvider {
             ParseFailure('Le manifest reçu n’est pas un JSON valide.'));
       }
 
+      if (map.containsKey('scrapers') && map['resources'] == null) {
+        return const Failure(
+          ValidationFailure(
+            'Ce dépôt utilise des scrapers JavaScript non pris en charge en mode natif. '
+            'Utilisez un addon Stremio/HTTP standard (ex: Torrentio, Pipe, Peerflix, Pluto TV).',
+          ),
+        );
+      }
+
       final isNuvio = map.containsKey('nuvioVersion') ||
-          map.containsKey('scrapers') ||
           map['protocol']?.toString().toLowerCase() == 'nuvio';
 
       final manifest = AddonManifest.fromJson(
@@ -97,6 +112,7 @@ class StremioAddonClient implements MediaProvider {
     required String catalogId,
     int skip = 0,
     String? searchQuery,
+    String? defaultExtra,
   }) async {
     if (addon.isOffline) {
       return const Failure(
@@ -106,12 +122,18 @@ class StremioAddonClient implements MediaProvider {
     final extraSegments = <String>[];
     if (searchQuery != null && searchQuery.trim().isNotEmpty) {
       extraSegments.add('search=${Uri.encodeComponent(searchQuery.trim())}');
-    } else if (skip > 0) {
-      extraSegments.add('skip=$skip');
+    } else {
+      if (defaultExtra != null && defaultExtra.trim().isNotEmpty) {
+        extraSegments.add(defaultExtra.trim());
+      }
+      if (skip > 0) {
+        extraSegments.add('skip=$skip');
+      }
     }
 
+    final encodedCat = _encodeStremioPathId(catalogId);
     final suffix = extraSegments.isEmpty ? '' : '/${extraSegments.join('&')}';
-    final url = '${addon.baseUrl}/catalog/$type/$catalogId$suffix.json';
+    final url = '${addon.baseUrl}/catalog/$type/$encodedCat$suffix.json';
 
     try {
       final response = await _dio.get<dynamic>(url);
@@ -123,7 +145,7 @@ class StremioAddonClient implements MediaProvider {
       final items = <MediaItem>[];
       for (final raw in map['metas'] as List) {
         if (raw is Map<String, dynamic>) {
-          final parsed = MediaItem.fromStremioMeta(raw);
+          final parsed = MediaItem.fromStremioMeta(raw, fallbackType: type);
           if (parsed.id.isNotEmpty && parsed.poster.isNotEmpty) {
             items.add(parsed);
           }
@@ -146,7 +168,7 @@ class StremioAddonClient implements MediaProvider {
       return const Failure(AddonOfflineFailure('Addon hors ligne.'));
     }
 
-    final encodedId = Uri.encodeComponent(mediaId);
+    final encodedId = _encodeStremioPathId(mediaId);
     final url = '${addon.baseUrl}/meta/$type/$encodedId.json';
 
     try {
@@ -156,7 +178,10 @@ class StremioAddonClient implements MediaProvider {
         return const Failure(ParseFailure('Format meta invalide.'));
       }
       return Success(
-        MediaItem.fromStremioMeta(map['meta'] as Map<String, dynamic>),
+        MediaItem.fromStremioMeta(
+          map['meta'] as Map<String, dynamic>,
+          fallbackType: type,
+        ),
       );
     } catch (e) {
       return Failure(
@@ -174,7 +199,7 @@ class StremioAddonClient implements MediaProvider {
       return const Failure(AddonOfflineFailure('Addon hors ligne.'));
     }
 
-    final encodedId = Uri.encodeComponent(mediaId);
+    final encodedId = _encodeStremioPathId(mediaId);
     final url = '${addon.baseUrl}/stream/$type/$encodedId.json';
 
     try {
@@ -192,7 +217,8 @@ class StremioAddonClient implements MediaProvider {
             addonId: addon.id,
             addonName: addon.manifest.name,
           );
-          if (source.url.isNotEmpty &&
+          if (!source.isExternal &&
+              source.url.isNotEmpty &&
               UrlSecurityValidator.isSafeStreamUrl(source.url)) {
             streams.add(source);
           }
@@ -217,7 +243,7 @@ class StremioAddonClient implements MediaProvider {
       return const Failure(AddonOfflineFailure('Addon hors ligne.'));
     }
 
-    final encodedId = Uri.encodeComponent(mediaId);
+    final encodedId = _encodeStremioPathId(mediaId);
     final queryParts = <String>[];
     if (videoHash != null && videoHash.isNotEmpty) {
       queryParts.add('videoHash=${Uri.encodeComponent(videoHash)}');
@@ -253,7 +279,9 @@ class StremioAddonClient implements MediaProvider {
   Map<String, dynamic>? _decodeJsonMap(dynamic data) {
     if (data is Map<String, dynamic>) return data;
     if (data is String) {
-      final decoded = jsonDecode(data);
+      final trimmed = data.trim();
+      if (!trimmed.startsWith('{')) return null;
+      final decoded = jsonDecode(trimmed);
       if (decoded is Map<String, dynamic>) return decoded;
     }
     return null;

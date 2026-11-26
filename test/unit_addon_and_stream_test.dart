@@ -139,10 +139,10 @@ void main() {
       expect(result.failureOrNull, isA<ParseFailure>());
     });
 
-    test('circuit breaker marks addon offline after 3 consecutive failures',
+    test('circuit breaker marks addon offline after 5 consecutive failures',
         () async {
       final addon = SeedCatalogData.defaultProposedAddons().first.copyWith(
-            failureCount: 3,
+            failureCount: 5,
           );
       expect(addon.isOffline, isTrue);
 
@@ -157,18 +157,18 @@ void main() {
   });
 
   group('StreamDeduplicator & WatchProgressItem', () {
-    test('deduplicates identical infoHashes and ranks 4K HDR above 1080p SDR',
+    test('deduplicates identical infoHashes and prioritizes direct HTTP & well-seeded streams',
         () {
       const s1080 = StreamSource(
         id: '1',
         addonId: 'a',
-        addonName: 'Comet',
+        addonName: 'Pipe',
         title: '1080p',
         quality: '1080p',
         hdrMode: 'SDR',
         url: 'magnet:?xt=urn:btih:abc123',
         infoHash: 'abc123',
-        seeders: 50,
+        seeders: 40,
       );
       const s4k = StreamSource(
         id: '2',
@@ -179,24 +179,24 @@ void main() {
         hdrMode: 'HDR',
         url: 'magnet:?xt=urn:btih:abc123',
         infoHash: 'abc123',
-        seeders: 300,
+        seeders: 450,
       );
-      const sOther = StreamSource(
+      const sDirect = StreamSource(
         id: '3',
         addonId: 'c',
-        addonName: 'MediaFusion',
-        title: '1080p',
+        addonName: 'Pluto TV',
+        title: 'Direct HLS',
         quality: '1080p',
         hdrMode: 'SDR',
-        url: 'https://cdn.example.com/video.mp4',
-        seeders: 120,
+        url: 'https://cdn.example.com/video.m3u8',
+        seeders: 300,
       );
 
       final ranked =
-          StreamDeduplicator.deduplicateAndRank([s1080, s4k, sOther]);
+          StreamDeduplicator.deduplicateAndRank([s1080, s4k, sDirect]);
       expect(ranked.length, 2);
-      expect(ranked.first.addonName, 'Torrentio');
-      expect(ranked.first.quality, '4K');
+      expect(ranked.first.addonName, 'Pluto TV');
+      expect(ranked.last.addonName, 'Torrentio');
     });
 
     test('calculates watch progress fraction and clock formatting accurately',

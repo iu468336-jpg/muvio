@@ -95,7 +95,9 @@ class AddonsController extends _$AddonsController {
       final current = state.valueOrNull ?? const <InstalledAddon>[];
       final withoutDup = current.where((a) => a.id != res.value.id).toList();
       state = AsyncData([res.value, ...withoutDup]);
-      ref.invalidate(homeCatalogProvider);
+      ref
+        ..invalidate(homeCatalogProvider)
+        ..invalidate(homeSectionsProvider);
     }
     return res;
   }
@@ -111,7 +113,9 @@ class AddonsController extends _$AddonsController {
         for (final a in current)
           if (a.id == addon.id || a.id == res.value.id) res.value else a,
       ]);
-      ref.invalidate(homeCatalogProvider);
+      ref
+        ..invalidate(homeCatalogProvider)
+        ..invalidate(homeSectionsProvider);
     }
     return res;
   }
@@ -125,16 +129,28 @@ class AddonsController extends _$AddonsController {
       for (final a in current)
         if (a.id == addon.id) updated else a,
     ]);
-    ref.invalidate(homeCatalogProvider);
+    ref
+      ..invalidate(homeCatalogProvider)
+      ..invalidate(homeSectionsProvider);
   }
 
   Future<void> deleteAddon(String addonId) async {
     await ref.read(addonRepositoryProvider).removeAddon(addonId);
     final current = state.valueOrNull ?? const <InstalledAddon>[];
     state = AsyncData(current.where((a) => a.id != addonId).toList());
-    ref.invalidate(homeCatalogProvider);
+    ref
+      ..invalidate(homeCatalogProvider)
+      ..invalidate(homeSectionsProvider);
   }
 }
+
+final homeSectionsProvider =
+    FutureProvider.autoDispose<List<HomeCatalogSection>>((ref) async {
+  final addons = await ref.watch(addonsControllerProvider.future);
+  return ref
+      .watch(catalogRepositoryProvider)
+      .fetchHomeSections(activeAddons: addons);
+});
 
 @riverpod
 Future<List<MediaItem>> homeCatalog(Ref ref) async {

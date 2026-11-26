@@ -16,10 +16,9 @@ import 'package:muvio/shared/widgets/skeleton_and_empty.dart';
 part 'home_widgets.dart';
 
 /// Screen 1 — Accueil (Portrait):
-/// Header MUVIO + Avatar, Hero Carousel ("ÉCLIPSE" + live Cinemeta highlights),
-/// Continuer à regarder (shown ONLY when the user has actually watched content),
-/// Tendances (Films populaires Cinemeta), Séries populaires, Nouveautés ("N" badge),
-/// Pull-to-refresh & skeleton shimmer.
+/// Header MUVIO + Avatar, Hero Carousel, Continuer à regarder (real watch history only),
+/// and Stremio/Nuvio-style dynamic horizontal catalog rows for EVERY installed & enabled
+/// catalog addon (Cinemeta, TMDB, Streaming Catalogs, Anime Kitsu, Pluto TV, custom URLs).
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
@@ -37,10 +36,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     super.dispose();
   }
 
+  void _openItemDetail(BuildContext context, MediaItem item) {
+    final encodedId = Uri.encodeComponent(item.id);
+    context.push('/detail/${item.type}/$encodedId');
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
-    final catalogAsync = ref.watch(homeCatalogProvider);
+    final sectionsAsync = ref.watch(homeSectionsProvider);
     final history = ref.watch(watchHistoryControllerProvider).valueOrNull ??
         const <WatchProgressItem>[];
     final watchlistAsync = ref.watch(watchlistControllerProvider);
@@ -48,15 +52,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       for (final m in watchlistAsync.valueOrNull ?? const <MediaItem>[]) m.id,
     };
 
-    final heroItems = catalogAsync.valueOrNull != null &&
-            catalogAsync.valueOrNull!.isNotEmpty
-        ? catalogAsync.valueOrNull!
-            .where((m) => (m.backdrop ?? '').isNotEmpty)
-            .take(5)
-            .toList()
-        : SeedCatalogData.heroItems;
+    final allItems = <MediaItem>[
+      for (final sec in sectionsAsync.valueOrNull ?? const <HomeCatalogSection>[])
+        ...sec.items,
+    ];
+    final heroCandidates = allItems
+        .where((m) => (m.backdrop ?? '').isNotEmpty && m.poster.isNotEmpty)
+        .take(5)
+        .toList();
     final effectiveHeroes =
-        heroItems.isNotEmpty ? heroItems : SeedCatalogData.heroItems;
+        heroCandidates.isNotEmpty ? heroCandidates : SeedCatalogData.heroItems;
 
     return SafeArea(
       bottom: false,
@@ -64,8 +69,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         color: AppColors.red,
         backgroundColor: AppColors.surface2,
         onRefresh: () async {
-          ref.invalidate(homeCatalogProvider);
-          await ref.read(homeCatalogProvider.future);
+          ref
+            ..invalidate(homeSectionsProvider)
+            ..invalidate(homeCatalogProvider);
+          await ref.read(homeSectionsProvider.future);
         },
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(
@@ -88,8 +95,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   items: effectiveHeroes,
                   watchlistIds: watchlistIds,
                   onPageChanged: (idx) => setState(() => _heroPage = idx),
-                  onWatch: (item) =>
-                      context.push('/detail/${item.type}/${item.id}'),
+                  onWatch: (item) => _openItemDetail(context, item),
                   onToggleList: (item) => ref
                       .read(watchlistControllerProvider.notifier)
                       .toggle(item),
@@ -121,10 +127,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         const SizedBox(width: AppSpacing.md),
                     itemBuilder: (context, index) {
                       final entry = history[index];
+                      final encodedId = Uri.encodeComponent(entry.media.id);
                       return _ContinueWatchingCard(
                         entry: entry,
                         onTap: () => context.push(
-                          '/player/${entry.media.type}/${entry.media.id}',
+                          '/player/${entry.media.type}/$encodedId',
                         ),
                       );
                     },
@@ -132,141 +139,68 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ),
               ),
             ],
-            const SliverToBoxAdapter(
-              child: SizedBox(height: AppSpacing.sectionGap),
-            ),
-            SliverToBoxAdapter(
-              child: SectionHeader(
-                title: l10n.trending,
-                actionLabel: l10n.seeAll,
-                onActionTap: () => context.go('/search'),
-              ),
-            ),
-            const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.md)),
-            SliverToBoxAdapter(
-              child: SizedBox(
-                height: 168,
-                child: catalogAsync.when(
-                  data: (items) {
-                    final movies =
-                        items.where((e) => e.type == 'movie').take(15).toList();
-                    final trending =
-                        movies.isNotEmpty ? movies : items.take(15).toList();
-                    return ListView.separated(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: AppSpacing.screenPadding,
+            ...sectionsAsync.when(
+              data: (sections) => [
+                for (final section in sections) ...[
+                  const SliverToBoxAdapter(
+                    child: SizedBox(height: AppSpacing.sectionGap),
+                  ),
+                  SliverToBoxAdapter(
+                    child: SectionHeader(
+                      title: section.displayTitle,
+                      actionLabel: l10n.seeAll,
+                      onActionTap: () => context.go('/search'),
+                    ),
+                  ),
+                  const SliverToBoxAdapter(
+                    child: SizedBox(height: AppSpacing.md),
+                  ),
+                  SliverToBoxAdapter(
+                    child: SizedBox(
+                      height: 168,
+                      child: ListView.separated(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.screenPadding,
+                        ),
+                        scrollDirection: Axis.horizontal,
+                        itemCount: section.items.take(25).length,
+                        separatorBuilder: (_, __) =>
+                            const SizedBox(width: AppSpacing.md),
+                        itemBuilder: (context, index) {
+                          final item = section.items[index];
+                          return PosterCard(
+                            item: item,
+                            width: 112,
+                            showNewBadge: item.isNewRelease,
+                            onTap: () => _openItemDetail(context, item),
+                          );
+                        },
                       ),
-                      scrollDirection: Axis.horizontal,
-                      itemCount: trending.length,
-                      separatorBuilder: (_, __) =>
-                          const SizedBox(width: AppSpacing.md),
-                      itemBuilder: (context, index) {
-                        final item = trending[index];
-                        return PosterCard(
-                          item: item,
-                          width: 112,
-                          onTap: () =>
-                              context.push('/detail/${item.type}/${item.id}'),
-                        );
-                      },
-                    );
-                  },
-                  loading: () => const _HorizontalSkeletonList(),
-                  error: (_, __) => const SizedBox.shrink(),
+                    ),
+                  ),
+                ],
+              ],
+              loading: () => const [
+                SliverToBoxAdapter(
+                  child: SizedBox(height: AppSpacing.sectionGap),
                 ),
-              ),
-            ),
-            const SliverToBoxAdapter(
-              child: SizedBox(height: AppSpacing.sectionGap),
-            ),
-            SliverToBoxAdapter(
-              child: SectionHeader(
-                title: l10n.seriesGroup,
-                actionLabel: l10n.seeAll,
-                onActionTap: () => context.go('/search'),
-              ),
-            ),
-            const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.md)),
-            SliverToBoxAdapter(
-              child: SizedBox(
-                height: 168,
-                child: catalogAsync.when(
-                  data: (items) {
-                    final series = items
-                        .where((e) => e.type == 'series')
-                        .take(15)
-                        .toList();
-                    final list =
-                        series.isNotEmpty ? series : items.take(10).toList();
-                    return ListView.separated(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: AppSpacing.screenPadding,
-                      ),
-                      scrollDirection: Axis.horizontal,
-                      itemCount: list.length,
-                      separatorBuilder: (_, __) =>
-                          const SizedBox(width: AppSpacing.md),
-                      itemBuilder: (context, index) {
-                        final item = list[index];
-                        return PosterCard(
-                          item: item,
-                          width: 112,
-                          onTap: () =>
-                              context.push('/detail/${item.type}/${item.id}'),
-                        );
-                      },
-                    );
-                  },
-                  loading: () => const _HorizontalSkeletonList(),
-                  error: (_, __) => const SizedBox.shrink(),
+                SliverToBoxAdapter(
+                  child: SizedBox(
+                    height: 168,
+                    child: _HorizontalSkeletonList(),
+                  ),
                 ),
-              ),
-            ),
-            const SliverToBoxAdapter(
-              child: SizedBox(height: AppSpacing.sectionGap),
-            ),
-            SliverToBoxAdapter(
-              child: SectionHeader(
-                title: l10n.newReleases,
-                actionLabel: l10n.seeAll,
-                onActionTap: () => context.go('/search'),
-              ),
-            ),
-            const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.md)),
-            SliverToBoxAdapter(
-              child: SizedBox(
-                height: 168,
-                child: catalogAsync.when(
-                  data: (items) {
-                    final releases =
-                        items.where((e) => e.isNewRelease).toList();
-                    final list = releases.isNotEmpty
-                        ? releases
-                        : items.skip(5).take(12).toList();
-                    return ListView.separated(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: AppSpacing.screenPadding,
-                      ),
-                      scrollDirection: Axis.horizontal,
-                      itemCount: list.length,
-                      separatorBuilder: (_, __) =>
-                          const SizedBox(width: AppSpacing.md),
-                      itemBuilder: (context, index) {
-                        final item = list[index];
-                        return PosterCard(
-                          item: item,
-                          width: 112,
-                          showNewBadge: true,
-                          onTap: () =>
-                              context.push('/detail/${item.type}/${item.id}'),
-                        );
-                      },
-                    );
-                  },
-                  loading: () => const _HorizontalSkeletonList(),
-                  error: (_, __) => const SizedBox.shrink(),
+                SliverToBoxAdapter(
+                  child: SizedBox(height: AppSpacing.sectionGap),
                 ),
-              ),
+                SliverToBoxAdapter(
+                  child: SizedBox(
+                    height: 168,
+                    child: _HorizontalSkeletonList(),
+                  ),
+                ),
+              ],
+              error: (_, __) => const [],
             ),
             const SliverToBoxAdapter(child: SizedBox(height: 92)),
           ],

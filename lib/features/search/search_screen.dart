@@ -7,7 +7,6 @@ import 'package:lucide_icons/lucide_icons.dart';
 import 'package:muvio/core/theme/app_colors.dart';
 import 'package:muvio/core/theme/app_spacing.dart';
 import 'package:muvio/core/theme/app_typography.dart';
-import 'package:muvio/data/models/addon_models.dart';
 import 'package:muvio/data/models/media_models.dart';
 import 'package:muvio/data/models/seed_catalog.dart';
 import 'package:muvio/data/providers/app_providers.dart';
@@ -62,8 +61,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   Future<void> _runSearch() async {
     setState(() => _searching = true);
-    final addons = ref.read(addonsControllerProvider).valueOrNull ??
-        const <InstalledAddon>[];
+    final addons = await ref.read(addonsControllerProvider.future);
     final items = await ref.read(catalogRepositoryProvider).searchAcrossAddons(
           query: _query,
           activeAddons: addons,
@@ -199,8 +197,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     return _Top10RankPoster(
                       rank: index + 1,
                       item: item,
-                      onTap: () =>
-                          context.push('/detail/${item.type}/${item.id}'),
+                      onTap: () => context.push(
+                        '/detail/${item.type}/${Uri.encodeComponent(item.id)}',
+                      ),
                     );
                   },
                 ),
@@ -262,8 +261,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     return PosterCard(
                       item: item,
                       showRatingBadge: true,
-                      onTap: () =>
-                          context.push('/detail/${item.type}/${item.id}'),
+                      onTap: () => context.push(
+                        '/detail/${item.type}/${Uri.encodeComponent(item.id)}',
+                      ),
                     );
                   },
                   childCount: _results.length,

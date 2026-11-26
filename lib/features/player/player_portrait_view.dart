@@ -64,9 +64,14 @@ class _PortraitPlayerView extends StatelessWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(media.title, style: AppTypography.h2),
                             Text(
-                              '${media.year} · Episode 1',
+                              media.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: AppTypography.h2,
+                            ),
+                            Text(
+                              '${media.year} · ${activeStream?.quality ?? 'HD'}',
                               style: AppTypography.caption,
                             ),
                           ],
@@ -93,11 +98,53 @@ class _PortraitPlayerView extends StatelessWidget {
                   ),
                 ),
                 Center(
-                  child: _GlassTransportRow(
-                    isPlaying: state._isPlaying,
-                    onRewind: () => state._seekRelative(-10),
-                    onPlayPause: state._togglePlayPause,
-                    onForward: () => state._seekRelative(10),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (state._isBuffering && activeStream != null)
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 10),
+                          child: SizedBox(
+                            width: 28,
+                            height: 28,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              color: AppColors.red,
+                            ),
+                          ),
+                        ),
+                      _GlassTransportRow(
+                        isPlaying: state._isPlaying,
+                        onRewind: () => state._seekRelative(-10),
+                        onPlayPause: state._togglePlayPause,
+                        onForward: () => state._seekRelative(10),
+                      ),
+                      if (state._statusBanner != null) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          margin: const EdgeInsets.symmetric(horizontal: 20),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.72),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: AppColors.line),
+                          ),
+                          child: Text(
+                            state._statusBanner!,
+                            maxLines: 2,
+                            textAlign: TextAlign.center,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTypography.caption.copyWith(
+                              color: Colors.white,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
                 if (state._position.inSeconds < media.introEndSeconds)
@@ -294,7 +341,7 @@ class _PortraitPlayerView extends StatelessWidget {
                                 ),
                                 SizedBox(height: 6),
                                 Text(
-                                  'Activez Torrentio, Comet ou MediaFusion dans l’onglet Addons.',
+                                  'Activez Torrentio, Pipe, Peerflix ou Pluto TV dans Addons.',
                                   textAlign: TextAlign.center,
                                   style: AppTypography.caption,
                                 ),

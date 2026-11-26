@@ -23,20 +23,45 @@ class MainActivity : FlutterActivity() {
                         val uri = call.argument<String>("uri") ?: ""
                         val infoHash = call.argument<String>("infoHash")
                         val fileIdx = call.argument<Int>("fileIdx") ?: 0
-                        try {
-                            if (streamController == null) {
-                                val cacheRoot = File(cacheDir, "muvio_torrents")
-                                cacheRoot.mkdirs()
-                                streamController = LocalTorrentStreamController(cacheRoot)
+                        val sources = call.argument<List<String>>("sources") ?: emptyList()
+                        Thread {
+                            try {
+                                if (streamController == null) {
+                                    val cacheRoot = File(cacheDir, "muvio_torrents")
+                                    cacheRoot.mkdirs()
+                                    streamController = LocalTorrentStreamController(cacheRoot)
+                                }
+                                val localUrl = streamController!!.startSequentialStream(
+                                    magnetOrUri = uri,
+                                    infoHash = infoHash,
+                                    fileIndex = fileIdx,
+                                    sources = sources
+                                )
+                                runOnUiThread {
+                                    result.success(localUrl)
+                                }
+                            } catch (t: Throwable) {
+                                runOnUiThread {
+                                    result.error("TORRENT_ERR", t.message, null)
+                                }
                             }
-                            val localUrl = streamController!!.startSequentialStream(
-                                magnetOrUri = uri,
-                                infoHash = infoHash,
-                                fileIndex = fileIdx
+                        }.start()
+                    }
+                    "getTorrentStatus" -> {
+                        try {
+                            val status = streamController?.getStreamStatus() ?: mapOf(
+                                "hasMetadata" to false,
+                                "readyToPlay" to false,
+                                "peers" to 0,
+                                "seeds" to 0,
+                                "downloadSpeed" to 0,
+                                "progress" to 0.0,
+                                "bufferedBytes" to 0L,
+                                "fileSize" to 0L
                             )
-                            result.success(localUrl)
+                            result.success(status)
                         } catch (t: Throwable) {
-                            result.error("TORRENT_ERR", t.message, null)
+                            result.error("STATUS_ERR", t.message, null)
                         }
                     }
                     "stopTorrentStream" -> {

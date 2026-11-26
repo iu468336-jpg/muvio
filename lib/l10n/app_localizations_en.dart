@@ -224,7 +224,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get viewOnGithub => 'View on GitHub';
 
   @override
-  String get versionFooter => 'v1.0.0 · Open Source';
+  String get versionFooter => 'v1.0.2 · Open Source';
 
   @override
   String get selectSourceTitle => 'Select Source';

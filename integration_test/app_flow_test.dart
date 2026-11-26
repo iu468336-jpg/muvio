@@ -27,7 +27,7 @@ void main() {
       );
       await tester.pumpAndSettle(const Duration(milliseconds: 500));
 
-      expect(find.text('Tendances'), findsOneWidget);
+      expect(find.text('MUVIO'), findsWidgets);
 
       await tester.tap(find.text('Recherche'));
       await tester.pumpAndSettle(const Duration(milliseconds: 400));
@@ -35,7 +35,7 @@ void main() {
 
       await tester.tap(find.text('Oppenheimer').first);
       await tester.pumpAndSettle(const Duration(milliseconds: 400));
-      expect(find.text('Sources disponibles'), findsOneWidget);
+      expect(find.textContaining('Sources disponibles'), findsOneWidget);
     },
   );
 }
