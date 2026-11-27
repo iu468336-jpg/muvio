@@ -6,6 +6,7 @@ import 'package:muvio/data/models/addon_models.dart';
 import 'package:muvio/data/models/app_settings.dart';
 import 'package:muvio/data/models/media_models.dart';
 import 'package:muvio/data/providers/native_video_player_bridge.dart';
+import 'package:muvio/data/providers/nuvio_plugin_bridge.dart';
 import 'package:muvio/data/providers/stremio_addon_client.dart';
 import 'package:muvio/data/providers/torrent_engine_bridge.dart';
 import 'package:muvio/data/repositories/addon_repository.dart';
