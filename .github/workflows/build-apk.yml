@@ -19,6 +19,28 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '17'
+          cache: 'gradle'
+
+      - name: Configure Gradle Google Maven Central Mirror (prevents Azure IP 429)
+        run: |
+          mkdir -p ~/.gradle
+          cat << 'EOF' > ~/.gradle/init.gradle
+          beforeSettings { settings ->
+            settings.pluginManagement.repositories {
+              maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
+            }
+          }
+          allprojects {
+            buildscript {
+              repositories {
+                maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
+              }
+            }
+            repositories {
+              maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
+            }
+          }
+          EOF
 
       - uses: subosito/flutter-action@v2
         with:
