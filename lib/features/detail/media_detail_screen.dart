@@ -476,8 +476,10 @@ class _MediaDetailScreenState extends ConsumerState<MediaDetailScreen> {
                               Container(
                                 width: 38,
                                 height: 38,
-                                decoration: const BoxDecoration(
-                                  color: AppColors.red,
+                                decoration: BoxDecoration(
+                                  color: stream.isTorrent
+                                      ? AppColors.red
+                                      : const Color(0xFF00A86B),
                                   shape: BoxShape.circle,
                                 ),
                                 child: Icon(
@@ -507,10 +509,12 @@ class _MediaDetailScreenState extends ConsumerState<MediaDetailScreen> {
                                     const SizedBox(height: 2),
                                     Text(
                                       stream.isTorrent
-                                          ? '${Formatters.formatBytesFr(stream.sizeBytes)} · 👤 ${stream.seeders} pairs'
-                                          : 'Flux direct HTTP/HLS instantané',
+                                          ? 'P2P NuvioEngine · ${Formatters.formatBytesFr(stream.sizeBytes)} · 👤 ${stream.seeders} pairs'
+                                          : '⚡ Lecture Directe Nuvio HTTP/HLS (0 attente P2P)',
                                       style: AppTypography.caption.copyWith(
-                                        color: AppColors.redGlow,
+                                        color: stream.isTorrent
+                                            ? AppColors.redGlow
+                                            : const Color(0xFF3CE39B),
                                         fontSize: 11,
                                       ),
                                     ),

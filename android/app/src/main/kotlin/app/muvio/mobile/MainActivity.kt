@@ -4,6 +4,7 @@ import android.app.PictureInPictureParams
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
+import app.muvio.mobile.nuvio.NuvioPluginRuntimeController
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.renderer.FlutterRenderer
@@ -12,6 +13,7 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private val torrentChannelName = "app.muvio.mobile/torrent_engine"
+    private val nuvioPluginsChannelName = "app.muvio.mobile/nuvio_plugins"
     private val playerChannelName = "app.muvio.mobile/native_player"
     private val playerEventsChannelName = "app.muvio.mobile/native_player_events"
     private val pipChannelName = "app.muvio.mobile/pip"
@@ -19,6 +21,7 @@ class MainActivity : FlutterActivity() {
 
     private var torrentClient: TorrentServiceClient? = null
     private var media3Controller: NativeMedia3PlayerController? = null
+    private var nuvioPluginController: NuvioPluginRuntimeController? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Since EnableImpeller=false runs Flutter on Skia OpenGL ES, pin GL textures
@@ -44,8 +47,13 @@ class MainActivity : FlutterActivity() {
         playerCtrl.attachEventChannel(EventChannel(messenger, playerEventsChannelName))
         media3Controller = playerCtrl
 
-        val client = TorrentServiceClient(applicationContext)
+        val client = TorrentServiceClient(applicationContext).also {
+            it.warmUp()
+        }
         torrentClient = client
+
+        val nuvioPlugins = NuvioPluginRuntimeController(applicationContext)
+        nuvioPluginController = nuvioPlugins
 
         MethodChannel(messenger, playerChannelName).setMethodCallHandler { call, result ->
             @Suppress("UNCHECKED_CAST")
@@ -53,17 +61,25 @@ class MainActivity : FlutterActivity() {
             playerCtrl.handleMethodCall(call.method, args, result)
         }
 
+        MethodChannel(messenger, nuvioPluginsChannelName).setMethodCallHandler { call, result ->
+            @Suppress("UNCHECKED_CAST")
+            val args = call.arguments as? Map<String, Any?>
+            nuvioPlugins.handleMethodCall(call.method, args, result)
+        }
+
         MethodChannel(messenger, torrentChannelName).setMethodCallHandler { call, result ->
             when (call.method) {
                 "startTorrentStream" -> {
                     val uri = call.argument<String>("uri") ?: ""
                     val infoHash = call.argument<String>("infoHash")
-                    val fileIdx = call.argument<Int>("fileIdx") ?: 0
+                    val fileIdx = call.argument<Int>("fileIdx") ?: -1
+                    val filenameHint = call.argument<String>("filenameHint")
                     val sources = call.argument<List<String>>("sources") ?: emptyList()
                     client.startStream(
                         uri = uri,
                         infoHash = infoHash,
                         fileIdx = fileIdx,
+                        filenameHint = filenameHint,
                         sources = sources,
                         result = result
                     )
@@ -73,6 +89,10 @@ class MainActivity : FlutterActivity() {
                 }
                 "stopTorrentStream" -> {
                     client.stopStream(result)
+                }
+                "warmUp" -> {
+                    client.warmUp()
+                    result.success(null)
                 }
                 else -> result.notImplemented()
             }
@@ -124,6 +144,12 @@ class MainActivity : FlutterActivity() {
         } catch (_: Throwable) {
         }
         media3Controller = null
+
+        try {
+            nuvioPluginController?.shutdown()
+        } catch (_: Throwable) {
+        }
+        nuvioPluginController = null
 
         try {
             torrentClient?.shutdown()

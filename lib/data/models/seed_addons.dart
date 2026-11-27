@@ -1,13 +1,15 @@
 part of 'seed_catalog.dart';
 
-/// Verified live Stremio & HTTP addons (tested 200 OK with real catalogs & streams):
-/// - Pre-installed by default (`installed: true, enabled: true`):
+/// Verified live Nuvio Direct HTTP/HLS/MKV scrapers + Stremio addons:
+/// - Pre-installed & enabled out-of-the-box (`installed: true, enabled: true`):
 ///   1. Cinemeta (`com.linvo.cinemeta`) — Official movie & series catalogs + IMDb metadata
 ///   2. OpenSubtitles v3 (`org.stremio.opensubtitlesv3`) — Official multilingual subtitles
-/// - Verified 1-tap addons (`installed: false`):
-///   - Stream providers (work immediately without API keys): Torrentio, Torrentio Lite, Pipe, Peerflix, Pluto TV Live
-///   - Catalog & Metadata providers (display rows directly on Home like Stremio/Nuvio):
-///     The Movie Database Addon, Streaming Catalogs (Netflix/Prime/Disney+/Apple TV+), Anime Kitsu, Pluto TV, YouTube Channels.
+///   3. Nuvio All-in-One Direct (`nuvio.flixdlp.allinone`) — Instant Direct HLS/MKV multi-audio (VF/ENG + 30+ subs, zero P2P wait!)
+///   4. NiakVIO VF Direct (`nuvio.niakw.vf`) — French VF/VOSTFR Direct HTTP/HLS scrapers (Purstream, Sadisflix, French-Manga…)
+///   5. Nuvio Global Direct (`nuvio.yoruix.providers`) — VidLink, Videasy (Chamber FR), VixSrc Direct HLS
+///   6. Torrentio Lite (`com.stremio.torrentio.lite.addon`) — Fast P2P fallback powered by native NuvioEngine C++
+/// - Additional 1-tap directory addons (`installed: false`):
+///   Torrentio Full, Pipe, Peerflix, Pluto TV Live, Streaming Catalogs, TMDB, Anime Kitsu.
 List<InstalledAddon> _defaultProposedAddons() => [
       const InstalledAddon(
         id: 'com.linvo.cinemeta',
@@ -73,19 +75,85 @@ List<InstalledAddon> _defaultProposedAddons() => [
         ),
       ),
       const InstalledAddon(
-        id: 'com.stremio.torrentio.addon',
-        manifestUrl: 'https://torrentio.strem.fun/manifest.json',
-        installed: false,
-        enabled: false,
-        accentColorHex: 0xFFB0060F,
-        shortBadge: 'TOR',
-        categoryLabel: 'Sources Vidéo · 4K / 1080p',
+        id: 'nuvio.flixdlp.allinone',
+        manifestUrl:
+            'https://raw.githubusercontent.com/flix-dlp/All-in-One-Nuvio/main/manifest.json',
+        installed: true,
+        enabled: true,
+        accentColorHex: 0xFF00A86B,
+        shortBadge: 'DIRECT',
+        categoryLabel: 'Lecture Directe Nuvio · HLS/MKV Multi-Audio',
         manifest: AddonManifest(
-          id: 'com.stremio.torrentio.addon',
-          version: '0.0.15',
-          name: 'Torrentio',
+          id: 'nuvio.flixdlp.allinone',
+          version: '1.6.1',
+          name: 'Nuvio Direct (All-in-One)',
           description:
-              'Fournit des centaines de flux 4K HDR, 1080p et multi-audio (VF/VOSTFR) pour films, séries et animes sans configuration requise.',
+              'Flux HTTP/HLS/MKV directs instantanés (sans torrent ni attente de pairs) avec pistes Français VF + VO et sous-titres intégrés.',
+          resources: ['stream'],
+          types: ['movie', 'series', 'tv'],
+          catalogs: [],
+          idPrefixes: ['tt', 'tmdb:'],
+          kind: AddonKind.nuvio,
+        ),
+      ),
+      const InstalledAddon(
+        id: 'nuvio.niakw.vf',
+        manifestUrl:
+            'https://raw.githubusercontent.com/niakw/NiakVIO/main/vf/manifest.json',
+        installed: true,
+        enabled: true,
+        accentColorHex: 0xFF1565C0,
+        shortBadge: 'VF',
+        categoryLabel: 'Lecture Directe Nuvio · Français VF & Anime',
+        manifest: AddonManifest(
+          id: 'nuvio.niakw.vf',
+          version: '5.21.184',
+          name: 'NiakVIO VF Direct',
+          description:
+              'Sources HTTP/HLS françaises directes sans P2P (Purstream, Sadisflix, Webflix, French-Manga, Mugiwara, Neko-Sama).',
+          resources: ['stream'],
+          types: ['movie', 'series', 'anime', 'tv'],
+          catalogs: [],
+          idPrefixes: ['tt', 'tmdb:'],
+          kind: AddonKind.nuvio,
+        ),
+      ),
+      const InstalledAddon(
+        id: 'nuvio.yoruix.providers',
+        manifestUrl:
+            'https://raw.githubusercontent.com/yoruix/nuvio-providers/main/manifest.json',
+        installed: true,
+        enabled: true,
+        accentColorHex: 0xFF00838F,
+        shortBadge: 'NUVIO',
+        categoryLabel: 'Lecture Directe Nuvio · VidLink / Videasy / VixSrc',
+        manifest: AddonManifest(
+          id: 'nuvio.yoruix.providers',
+          version: '1.2.0',
+          name: 'Nuvio Providers Direct',
+          description:
+              'Scrapers Nuvio natifs QuickJS (VidLink, Videasy Chamber FR, VixSrc, CinemaCity) pour une lecture directe immédiate.',
+          resources: ['stream'],
+          types: ['movie', 'series', 'tv'],
+          catalogs: [],
+          idPrefixes: ['tt', 'tmdb:'],
+          kind: AddonKind.nuvio,
+        ),
+      ),
+      const InstalledAddon(
+        id: 'com.stremio.torrentio.lite.addon',
+        manifestUrl: 'https://torrentio.strem.fun/lite/manifest.json',
+        installed: true,
+        enabled: true,
+        accentColorHex: 0xFFD32F2F,
+        shortBadge: 'LITE',
+        categoryLabel: 'Sources P2P NuvioEngine · Rapide Mobile',
+        manifest: AddonManifest(
+          id: 'com.stremio.torrentio.lite.addon',
+          version: '0.0.15',
+          name: 'Torrentio Lite',
+          description:
+              'Version mobile rapide propulsée par le moteur C++ NuvioEngine : sélectionne les flux 1080p/720p les mieux seedés.',
           resources: ['stream'],
           types: ['movie', 'series', 'anime'],
           catalogs: [],
@@ -93,19 +161,19 @@ List<InstalledAddon> _defaultProposedAddons() => [
         ),
       ),
       const InstalledAddon(
-        id: 'com.stremio.torrentio.lite.addon',
-        manifestUrl: 'https://torrentio.strem.fun/lite/manifest.json',
+        id: 'com.stremio.torrentio.addon',
+        manifestUrl: 'https://torrentio.strem.fun/manifest.json',
         installed: false,
         enabled: false,
-        accentColorHex: 0xFFD32F2F,
-        shortBadge: 'LITE',
-        categoryLabel: 'Sources Vidéo · Rapide Mobile',
+        accentColorHex: 0xFFB0060F,
+        shortBadge: 'TOR',
+        categoryLabel: 'Sources P2P NuvioEngine · 4K / 1080p Complet',
         manifest: AddonManifest(
-          id: 'com.stremio.torrentio.lite.addon',
+          id: 'com.stremio.torrentio.addon',
           version: '0.0.15',
-          name: 'Torrentio Lite',
+          name: 'Torrentio',
           description:
-              'Version allégée optimisée pour smartphone : sélectionne uniquement les flux 1080p/720p les plus rapides à démarrer.',
+              'Fournit des centaines de flux 4K HDR, 1080p et multi-audio (VF/VOSTFR) pour films, séries et animes sans configuration requise.',
           resources: ['stream'],
           types: ['movie', 'series', 'anime'],
           catalogs: [],

@@ -2,21 +2,25 @@ import 'package:muvio/core/errors/result.dart';
 import 'package:muvio/data/models/addon_models.dart';
 import 'package:muvio/data/models/media_models.dart';
 import 'package:muvio/data/models/seed_catalog.dart';
+import 'package:muvio/data/providers/nuvio_plugin_bridge.dart';
 import 'package:muvio/data/providers/stremio_addon_client.dart';
 import 'package:muvio/data/repositories/addon_repository.dart';
 
 /// Aggregates Stremio/Nuvio-style per-addon Home catalog rows, metadata routing,
 /// multi-addon parallel search (`Future.wait`), and cross-ID (`tt`, `tmdb:`, `kitsu:`)
-/// deduplicated stream sources across all active addons.
+/// deduplicated stream sources across all active addons & Nuvio Direct HTTP scrapers.
 class CatalogRepository {
   CatalogRepository({
     required MediaProvider client,
     required AddonRepository addonRepository,
+    NuvioPluginBridge nuvioBridge = const NuvioPluginBridge(),
   })  : _client = client,
-        _addonRepository = addonRepository;
+        _addonRepository = addonRepository,
+        _nuvioBridge = nuvioBridge;
 
   final MediaProvider _client;
   final AddonRepository _addonRepository;
+  final NuvioPluginBridge _nuvioBridge;
 
   final Map<String, MediaItem> _itemMemoryCache = <String, MediaItem>{};
 
@@ -320,6 +324,24 @@ class CatalogRepository {
     final remoteFutures = <Future<List<StreamSource>>>[];
 
     for (final addon in streamAddons) {
+      if (addon.manifest.kind == AddonKind.nuvio) {
+        // Nuvio QuickJS Direct HTTP scrapers take a single IMDb or TMDB query per repo
+        final nuvioPair = queryPairs.firstWhere(
+          (p) => p.$2.startsWith('tt') || p.$2.startsWith('tmdb:'),
+          orElse: () => queryPairs.first,
+        );
+        remoteFutures.add(
+          _nuvioBridge
+              .fetchStreams(
+                addon: addon,
+                type: nuvioPair.$1,
+                mediaId: nuvioPair.$2,
+              )
+              .then((res) => res.valueOrNull ?? const <StreamSource>[]),
+        );
+        continue;
+      }
+
       for (final pair in queryPairs) {
         final qType = pair.$1;
         final qId = pair.$2;

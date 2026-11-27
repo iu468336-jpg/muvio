@@ -123,6 +123,40 @@ void main() {
       expect(manifest.catalogs.first.searchSupported, isTrue);
     });
 
+    test('parses Nuvio JS scraper repository manifest.json as AddonKind.nuvio',
+        () async {
+      when(() => mockDio.getUri<dynamic>(any())).thenAnswer(
+        (_) async => Response<dynamic>(
+          requestOptions: RequestOptions(
+            path:
+                'https://raw.githubusercontent.com/flix-dlp/All-in-One-Nuvio/main/manifest.json',
+          ),
+          statusCode: 200,
+          data: {
+            'name': 'All-in-One-Nuvio',
+            'version': '1.6.1',
+            'scrapers': [
+              {
+                'id': 'net77',
+                'name': 'Net77',
+                'filename': 'providers/net77.js',
+                'supportedTypes': ['movie', 'tv'],
+                'enabled': true,
+              },
+            ],
+          },
+        ),
+      );
+
+      final result = await client.fetchManifest(
+        'https://raw.githubusercontent.com/flix-dlp/All-in-One-Nuvio/main/manifest.json',
+      );
+      expect(result.isSuccess, isTrue);
+      final manifest = result.valueOrNull!;
+      expect(manifest.kind.name, 'nuvio');
+      expect(manifest.supportsResource('stream'), isTrue);
+    });
+
     test('returns ParseFailure without crashing on malformed JSON', () async {
       when(() => mockDio.getUri<dynamic>(any())).thenAnswer(
         (_) async => Response<dynamic>(

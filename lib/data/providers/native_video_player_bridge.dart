@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:muvio/data/models/media_models.dart';
 
 @immutable
 class NativePlayerOpenResult {
@@ -81,7 +82,9 @@ class NativeVideoPlayerBridge {
 
   Future<NativePlayerOpenResult?> open({
     required String url,
+    String? filename,
     Map<String, String> headers = const {},
+    List<SubtitleTrackItem> subtitles = const [],
     int startPositionMs = 0,
     bool preferSoftware = false,
   }) async {
@@ -90,7 +93,19 @@ class NativeVideoPlayerBridge {
         'open',
         <String, dynamic>{
           'url': url,
+          'filename': filename,
           'headers': headers,
+          'subtitles': subtitles
+              .where((s) => s.url.isNotEmpty)
+              .map(
+                (s) => <String, String>{
+                  'id': s.id,
+                  'url': s.url,
+                  'lang': s.lang,
+                  'label': s.label,
+                },
+              )
+              .toList(),
           'startPositionMs': startPositionMs,
           'preferSoftware': preferSoftware,
         },

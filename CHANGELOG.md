@@ -2,6 +2,18 @@
 
 Toutes les modifications notables de **Muvio** sont documentées dans ce fichier.
 
+## [1.0.5] - 2026-11-26
+
+### Système de lecture Nuvio complet : Lecture Directe HTTP/HLS instantanée (QuickJS) + Moteur P2P C++ `NuvioEngine`
+- **Nouveau moteur de scrapers Nuvio Direct HTTP/HLS/MKV natif (`QuickJS 1.0.5-nuvio`) activé par défaut** :
+  - Exécution directe sur l'appareil des dépôts de scrapers Nuvio (**Nuvio Direct All-in-One**, **NiakVIO VF Direct**, **Nuvio Providers Direct**) sans serveur intermédiaire ni attente de pairs P2P : démarrage de la vidéo en **2 à 4 secondes** avec pistes multi-audio (**Français VF + VO**) et sous-titres WebVTT/SRT intégrés.
+  - Prise en charge complète de l'ajout de n'importe quel dépôt Nuvio (`manifest.json` contenant `scrapers`) directement depuis l'onglet **Addons**.
+- **Remplacement de `libtorrent4j` + `NanoHTTPD` par le véritable moteur C++ `NuvioEngine` (`lib-nuvio-engine-android 0.1.6`)** :
+  - Suppression définitive de la boucle bloquante `_waitUntilTorrentReady` de 40 s qui empêchait `ExoPlayer` de s'ouvrir tant que la dernière pièce du fichier n'était pas téléchargée.
+  - Ordonnancement dynamique des pièces à la demande piloté directement par les requêtes HTTP `Range` d'`ExoPlayer`, session DHT persistante préchauffée dès le lancement de l'application (`warmUp()`), cache RAM glissant de 48 Mo et cache disque persistant de 1,5 Go dans le processus isolé `:torrent` (100 % compatible Android 32-bit `armeabi-v7a` API 24+).
+- **Lecteur Media3 `ExoPlayer` mis à niveau au niveau NuvioMobile** :
+  - Transport réseau `OkHttpDataSource` (certificats CDN tolérants, en-têtes personnalisés `Referer`/`Origin`/`Cookie`/`User-Agent`, suppression des en-têtes `Range` parasites, timeout lecture 65 s sur `127.0.0.1`), `BufferedReadDataSource` 64 Ko, support des playlists HLS inline `data:`, drapeau audio `FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS`, injection automatique des sous-titres externes (Nuvio + OpenSubtitles v3) et bascule automatique vers la source suivante en cas de lien indisponible.
+
 ## [1.0.4] - 2026-11-26
 
 ### Élimination définitive du crash natif (`SIGSEGV`) à la sélection d'un flux vidéo et fiabilisation de la lecture (`armeabi-v7a` & `arm64-v8a`)

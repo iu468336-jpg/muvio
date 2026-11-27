@@ -51,12 +51,13 @@ class TorrentEngineBridge {
   static const MethodChannel _pipChannel =
       MethodChannel('app.muvio.mobile/pip');
 
-  /// Starts sequential download of header & tail pieces and returns a local
-  /// `http://127.0.0.1:<port>/stream` URL playable by AndroidX Media3 (`ExoPlayer`).
+  /// Starts NuvioEngine demand-scheduled P2P streaming and returns a local
+  /// `http://127.0.0.1:<port>/streams/<id>` URL playable immediately by Media3 (`ExoPlayer`).
   Future<Result<String>> resolveMagnetOrInfoHash({
     required String magnetOrUrl,
     String? infoHash,
     int? fileIdx,
+    String? filenameHint,
     List<String> sources = const [],
   }) async {
     try {
@@ -65,7 +66,8 @@ class TorrentEngineBridge {
         <String, dynamic>{
           'uri': magnetOrUrl,
           'infoHash': infoHash,
-          'fileIdx': fileIdx ?? 0,
+          'fileIdx': fileIdx ?? -1,
+          'filenameHint': filenameHint,
           'sources': sources,
         },
       );
@@ -73,7 +75,7 @@ class TorrentEngineBridge {
         return Success(localUrl);
       }
       return const Failure(
-        NetworkFailure('Serveur de streaming local non initialisé.'),
+        NetworkFailure('Serveur de streaming local Nuvio non initialisé.'),
       );
     } on MissingPluginException {
       // Graceful fallback in widget tests or desktop preview environments
@@ -82,7 +84,7 @@ class TorrentEngineBridge {
       AppLogger.warn('TorrentBridge', 'Torrent start error: $e');
       AppLogger.error('TorrentBridge', 'Details', e, st);
       return Failure(
-        NetworkFailure('Moteur torrent indisponible: $e', cause: e),
+        NetworkFailure('Moteur P2P Nuvio: $e', cause: e),
       );
     }
   }

@@ -39,6 +39,10 @@ final nativeVideoPlayerBridgeProvider =
   return const NativeVideoPlayerBridge();
 });
 
+final nuvioPluginBridgeProvider = Provider<NuvioPluginBridge>((ref) {
+  return const NuvioPluginBridge();
+});
+
 @Riverpod(keepAlive: true)
 AddonRepository addonRepository(Ref ref) {
   return AddonRepository(
@@ -52,6 +56,7 @@ CatalogRepository catalogRepository(Ref ref) {
   return CatalogRepository(
     client: ref.watch(stremioClientProvider),
     addonRepository: ref.watch(addonRepositoryProvider),
+    nuvioBridge: ref.watch(nuvioPluginBridgeProvider),
   );
 }
 

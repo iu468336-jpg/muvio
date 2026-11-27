@@ -70,16 +70,8 @@ class StremioAddonClient implements MediaProvider {
             ParseFailure('Le manifest reçu n’est pas un JSON valide.'));
       }
 
-      if (map.containsKey('scrapers') && map['resources'] == null) {
-        return const Failure(
-          ValidationFailure(
-            'Ce dépôt utilise des scrapers JavaScript non pris en charge en mode natif. '
-            'Utilisez un addon Stremio/HTTP standard (ex: Torrentio, Pipe, Peerflix, Pluto TV).',
-          ),
-        );
-      }
-
-      final isNuvio = map.containsKey('nuvioVersion') ||
+      final isNuvio = map['scrapers'] is List ||
+          map.containsKey('nuvioVersion') ||
           map['protocol']?.toString().toLowerCase() == 'nuvio';
 
       final manifest = AddonManifest.fromJson(

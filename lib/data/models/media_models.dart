@@ -336,6 +336,14 @@ class StreamSource {
     }
 
     final headers = <String, String>{};
+    if (json['headers'] is Map<String, dynamic>) {
+      final directHeaders = json['headers'] as Map<String, dynamic>;
+      for (final entry in directHeaders.entries) {
+        if (entry.value != null) {
+          headers[entry.key] = entry.value.toString();
+        }
+      }
+    }
     String? filename;
     if (json['behaviorHints'] is Map<String, dynamic>) {
       final hints = json['behaviorHints'] as Map<String, dynamic>;
@@ -407,14 +415,23 @@ class StreamSource {
   bool get isTorrent =>
       (infoHash != null && infoHash!.isNotEmpty) || url.startsWith('magnet:?');
 
-  /// Prioritizes direct HTTP/HLS streams and well-seeded 1080p/4K torrents
-  /// with reasonable mobile file sizes so playback starts fast on mobile!
+  /// Prioritizes direct HTTP/HLS Nuvio streams (especially VF / Multi-Audio)
+  /// ahead of P2P torrents so playback starts instantaneously!
   int get qualityScore {
     if (isExternal) return 10;
-    final directBonus = isTorrent ? 0 : 250;
+    final directBonus = isTorrent ? 0 : 480;
+    final upperTitle = '$addonName $title'.toUpperCase();
+    final frenchBonus = (upperTitle.contains('VF') ||
+            upperTitle.contains('FRENCH') ||
+            upperTitle.contains('FRANÇAIS') ||
+            upperTitle.contains('FRANCAIS') ||
+            upperTitle.contains('MULTI') ||
+            upperTitle.contains('FRA'))
+        ? 110
+        : 0;
     final resWeight = switch (quality) {
       '1080p' => 340,
-      '4K' => 320,
+      '4K' => 325,
       'LIVE' => 330,
       '720p' => 240,
       _ => 120,
@@ -427,7 +444,7 @@ class StreamSource {
         : sizeBytes > 10 * 1024 * 1024 * 1024
             ? 70
             : 0;
-    return directBonus + resWeight + hdrWeight + seedWeight - hugePenalty;
+    return directBonus + frenchBonus + resWeight + hdrWeight + seedWeight - hugePenalty;
   }
 
   String get deduplicationKey => infoHash != null && infoHash!.isNotEmpty

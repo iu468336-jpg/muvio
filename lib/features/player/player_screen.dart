@@ -10,6 +10,7 @@ import 'package:muvio/core/theme/app_colors.dart';
 import 'package:muvio/core/theme/app_spacing.dart';
 import 'package:muvio/core/theme/app_typography.dart';
 import 'package:muvio/core/utils/formatters.dart';
+import 'package:muvio/data/models/addon_models.dart';
 import 'package:muvio/data/models/app_settings.dart';
 import 'package:muvio/data/models/media_models.dart';
 import 'package:muvio/data/providers/app_providers.dart';
@@ -24,8 +25,8 @@ part 'player_landscape_view.dart';
 part 'player_controls.dart';
 
 /// Screens 3 & 7 — Portrait Video Player + Fullscreen Landscape 16:9 Player:
-/// Powered by AndroidX Media3 (`ExoPlayer` + Jellyfin FFmpeg Audio Decoder) +
-/// `libtorrent4j` (`setPosixDiskIO()`) piece-accurate HTTP stream bridge.
+/// Powered by AndroidX Media3 (`ExoPlayer` + Jellyfin FFmpeg Audio Decoder),
+/// Nuvio QuickJS Direct HTTP/HLS Scrapers, and NuvioEngine C++ P2P demand streaming.
 class PlayerScreen extends ConsumerStatefulWidget {
   const PlayerScreen({
     required this.mediaType,
@@ -64,6 +65,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   String? _statusBanner;
   TorrentStreamTelemetry _telemetry = const TorrentStreamTelemetry();
   int _sessionToken = 0;
+  int _autoFailoverCount = 0;
 
   String _selectedAudioLabel = 'Audio';
   double _playbackSpeed = 1;
@@ -132,6 +134,24 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           _isBuffering = event.isBuffering;
         });
       case 'error':
+        if (_autoFailoverCount < 2 && _streams.length > 1) {
+          final currentIdx =
+              _streams.indexWhere((s) => s.id == _activeStream?.id);
+          final nextIdx = currentIdx >= 0 ? currentIdx + 1 : 0;
+          if (nextIdx < _streams.length &&
+              _streams[nextIdx].id != _activeStream?.id) {
+            _autoFailoverCount++;
+            final fallbackSource = _streams[nextIdx];
+            setState(() {
+              _activeStream = fallbackSource;
+              _isBuffering = true;
+              _statusBanner =
+                  'Source indisponible — bascule automatique vers ${fallbackSource.addonName}…';
+            });
+            unawaited(_openSelectedSource(fallbackSource));
+            return;
+          }
+        }
         setState(() {
           _isBuffering = false;
           _statusBanner =
@@ -238,8 +258,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     setState(() {
       _isBuffering = true;
       _statusBanner = source.isTorrent
-          ? 'Connexion aux pairs et préparation du flux…'
-          : 'Ouverture du flux vidéo…';
+          ? 'Moteur Nuvio P2P : connexion rapide aux pairs…'
+          : 'Ouverture directe du flux HD (${source.addonName})…';
       _telemetry = const TorrentStreamTelemetry();
     });
 
@@ -249,58 +269,100 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
       var playableUrl = source.url;
       if (source.isTorrent) {
+        // Poll NuvioEngine telemetry immediately while metadata resolves & during playback
+        _telemetryTimer =
+            Timer.periodic(const Duration(milliseconds: 1000), (_) async {
+          final snap = await _torrentBridge.pollTelemetry();
+          if (!mounted || token != _sessionToken) return;
+          setState(() {
+            _telemetry = snap;
+            if (_isBuffering && _position.inMilliseconds < 400) {
+              final speedKb = (snap.downloadSpeedBytesPerSec / 1024).round();
+              _statusBanner = !snap.hasMetadata
+                  ? 'Nuvio P2P : récupération des métadonnées (${snap.peers} pairs)…'
+                  : 'Nuvio P2P : lecture progressive ($speedKb Ko/s · ${snap.peers} pairs)…';
+            }
+          });
+        });
+
         final resolved = await _torrentBridge.resolveMagnetOrInfoHash(
           magnetOrUrl: source.url,
           infoHash: source.infoHash,
           fileIdx: source.fileIdx,
+          filenameHint: source.filename ?? source.title,
           sources: source.sources,
         );
         if (!mounted || token != _sessionToken) return;
         final localUrl = resolved.valueOrNull;
         if (localUrl == null) {
+          _telemetryTimer?.cancel();
           setState(() {
             _isBuffering = false;
-            _statusBanner = 'Impossible de démarrer le moteur torrent.';
+            _statusBanner =
+                'Aucun pair actif trouvé sur ce torrent. Sélectionnez une source Directe Nuvio ci-dessous.';
           });
           return;
         }
         playableUrl = localUrl;
-
-        final ready = await _waitUntilTorrentReady(token);
-        if (!mounted || token != _sessionToken) return;
-        if (!ready) {
-          setState(() {
-            _isBuffering = false;
-            _statusBanner =
-                'Trop peu de pairs actifs sur cette source. Choisissez une source 1080p plus populaire.';
-          });
-          return;
-        }
-
-        _telemetryTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
-          final snap = await _torrentBridge.pollTelemetry();
-          if (mounted && token == _sessionToken) {
-            setState(() => _telemetry = snap);
-          }
-        });
       } else {
         // Ensure any previous torrent session is stopped when playing direct HTTP/HLS
         unawaited(_torrentBridge.stopAllStreams());
       }
 
       final headers = <String, String>{
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 14; Mobile) '
-            'AppleWebKit/537.36 (KHTML, like Gecko) '
-            'Chrome/131.0.0.0 Mobile Safari/537.36',
+        'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         ...source.httpHeaders,
       };
 
-      final resumeMs =
-          (_position.inSeconds > 5 && !source.isTorrent) ? _position.inMilliseconds : 0;
+      // Fetch OpenSubtitles sidecars in background/fast-path if stream doesn't already carry embedded VTTs
+      var externalSubtitles = source.subtitles;
+      if (externalSubtitles.isEmpty) {
+        try {
+          final addons = ref.read(addonsControllerProvider).valueOrNull ??
+              const <InstalledAddon>[];
+          final subAddon = addons
+              .where(
+                (a) =>
+                    a.installed &&
+                    a.enabled &&
+                    a.manifest.supportsResource('subtitles'),
+              )
+              .firstOrNull;
+          final rawId = Uri.decodeComponent(widget.mediaId);
+          final subId = _media?.imdbId != null && !rawId.startsWith('tt')
+              ? _media!.imdbId!
+              : rawId;
+          if (subAddon != null && subId.startsWith('tt')) {
+            final subRes = await ref
+                .read(stremioClientProvider)
+                .fetchSubtitles(
+                  addon: subAddon,
+                  type: widget.mediaType == 'anime' ? 'series' : widget.mediaType,
+                  mediaId: subId,
+                  filename: source.filename,
+                )
+                .timeout(const Duration(milliseconds: 2200));
+            externalSubtitles =
+                (subRes.valueOrNull ?? const <SubtitleTrackItem>[])
+                    .take(16)
+                    .toList();
+          }
+        } catch (_) {
+          // Never block video open if subtitle lookup times out
+        }
+      }
+
+      final resumeMs = (_position.inSeconds > 5 && !source.isTorrent)
+          ? _position.inMilliseconds
+          : 0;
 
       final opened = await _playerBridge.open(
         url: playableUrl,
+        filename: source.filename,
         headers: headers,
+        subtitles: externalSubtitles,
         startPositionMs: resumeMs,
         preferSoftware: settings.decoderMode == VideoDecoderMode.software,
       );
@@ -328,32 +390,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         });
       }
     }
-  }
-
-  Future<bool> _waitUntilTorrentReady(int token) async {
-    final deadline = DateTime.now().add(const Duration(seconds: 40));
-    while (
-        mounted && token == _sessionToken && DateTime.now().isBefore(deadline)) {
-      final snap = await _torrentBridge.pollTelemetry();
-      if (!mounted || token != _sessionToken) return false;
-
-      final speedKb = (snap.downloadSpeedBytesPerSec / 1024).round();
-      final msg = !snap.hasMetadata
-          ? 'Recherche des pairs (${snap.peers} connectés)…'
-          : 'Mise en mémoire tampon (${(snap.bufferedBytes / (1024 * 1024)).toStringAsFixed(1)} Mo · $speedKb Ko/s · ${snap.peers} pairs)…';
-
-      setState(() {
-        _telemetry = snap;
-        _statusBanner = msg;
-      });
-
-      if (snap.readyToPlay) {
-        return true;
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 550));
-    }
-    final lastSnap = await _torrentBridge.pollTelemetry();
-    return lastSnap.hasMetadata && lastSnap.bufferedBytes > 0;
   }
 
   Widget _buildVideoSurface(MediaItem media, {required int fallbackCacheWidth}) {
@@ -441,6 +477,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   }
 
   Future<void> _switchStream(StreamSource stream) async {
+    _autoFailoverCount = 0;
     setState(() {
       _activeStream = stream;
       _position = Duration.zero;

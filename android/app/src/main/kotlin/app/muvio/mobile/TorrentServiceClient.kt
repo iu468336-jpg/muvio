@@ -17,9 +17,8 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * Main-process IPC client talking to `TorrentForegroundService` (`android:process=":torrent"`).
  *
- * Guarantees that `libtorrent4j.so` is NEVER loaded into the Flutter UI process, and if the
- * `:torrent` service ever disconnects or restarts, all pending Flutter `MethodChannel.Result`
- * callbacks fail gracefully instead of hanging or crashing the UI.
+ * Pre-warms NuvioEngine's DHT session in the background so peer discovery is instant when the user
+ * selects a P2P stream.
  */
 class TorrentServiceClient(private val appContext: Context) {
 
@@ -127,6 +126,17 @@ class TorrentServiceClient(private val appContext: Context) {
         "fileSize" to 0L
     )
 
+    fun warmUp() {
+        withConnectedMessenger { messenger ->
+            if (messenger != null) {
+                try {
+                    messenger.send(Message.obtain(null, TorrentForegroundService.MSG_WARM_UP))
+                } catch (_: Throwable) {
+                }
+            }
+        }
+    }
+
     private fun withConnectedMessenger(action: (Messenger?) -> Unit) {
         val existing = serviceMessenger
         if (existing != null && existing.binder.isBinderAlive) {
@@ -171,6 +181,7 @@ class TorrentServiceClient(private val appContext: Context) {
         uri: String,
         infoHash: String?,
         fileIdx: Int,
+        filenameHint: String?,
         sources: List<String>,
         result: MethodChannel.Result
     ) {
@@ -178,7 +189,7 @@ class TorrentServiceClient(private val appContext: Context) {
             if (messenger == null) {
                 mainHandler.post {
                     try {
-                        result.error("BIND_ERR", "Impossible de joindre le processus torrent", null)
+                        result.error("BIND_ERR", "Impossible de joindre le moteur P2P Nuvio", null)
                     } catch (_: Throwable) {
                     }
                 }
@@ -192,23 +203,23 @@ class TorrentServiceClient(private val appContext: Context) {
                         if (localUrl != null) {
                             result.success(localUrl)
                         } else {
-                            result.error("TORRENT_ERR", err ?: "Erreur torrent", null)
+                            result.error("TORRENT_ERR", err ?: "Erreur moteur P2P Nuvio", null)
                         }
                     } catch (_: Throwable) {
                     }
                 }
             }
 
-            // Safety timeout (25 s) so startTorrentStream never hangs forever
+            // Safety timeout (42 s) matching NuvioEngine metadata timeout + margin
             mainHandler.postDelayed({
                 val stale = pendingStartCallbacks.remove(reqId)
                 if (stale != null) {
                     try {
-                        result.error("TIMEOUT", "Délai d'initialisation torrent dépassé", null)
+                        result.error("TIMEOUT", "Aucun pair actif trouvé à temps pour cette source P2P", null)
                     } catch (_: Throwable) {
                     }
                 }
-            }, 25_000L)
+            }, 42_000L)
 
             val msg = Message.obtain(null, TorrentForegroundService.MSG_START_STREAM, reqId, 0).apply {
                 replyTo = clientMessenger
@@ -216,6 +227,7 @@ class TorrentServiceClient(private val appContext: Context) {
                     putString("uri", uri)
                     putString("infoHash", infoHash)
                     putInt("fileIdx", fileIdx)
+                    putString("filenameHint", filenameHint)
                     putStringArrayList("sources", ArrayList(sources))
                 }
             }

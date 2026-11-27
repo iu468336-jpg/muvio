@@ -21,9 +21,10 @@ class AddonRepository {
   final MediaProvider _client;
 
   static const String _migrationKey = 'real_addons_v3_migrated';
+  static const String _nuvioDirectMigrationKey = 'nuvio_direct_v5_migrated';
   static const String _removedDefaultsKey = 'removed_default_addon_ids';
 
-  /// Obsolete fake or unconfigured 403/JS-only directory entries to purge automatically.
+  /// Obsolete fake or unconfigured 403 directory entries to purge automatically.
   static const Set<String> _legacyOrBrokenAddonIds = {
     'org.muvio.realdebrid',
     'org.muvio.trakt',
@@ -33,13 +34,12 @@ class AddonRepository {
     'plugin.nuvio.jellyfin',
     'comet.elfhosted.com',
     'stremio.addons.mediafusion|elfhosted',
-    'nuvio.raw_githubusercontent_com.all.in.one.nuvio',
-    'nuvio.raw_githubusercontent_com.yoru.s.repo',
     'com.linvo.stremiochannels',
   };
 
   Future<List<InstalledAddon>> loadAddons() async {
     await _migrateLegacyFakeDataIfNeeded();
+    await _migrateNuvioDirectV5IfNeeded();
 
     final rows = await _db.select(_db.addonEntries).get();
     final removedIds = await _loadRemovedDefaultIds();
@@ -61,8 +61,7 @@ class AddonRepository {
 
     for (final row in rows) {
       if (_legacyOrBrokenAddonIds.contains(row.id) ||
-          row.manifestUrl.contains('raw.githubusercontent.com/NuvioPlugin') ||
-          row.manifestUrl.contains('raw.githubusercontent.com/yoruix')) {
+          row.manifestUrl.contains('raw.githubusercontent.com/NuvioPlugin')) {
         await (_db.delete(_db.addonEntries)..where((t) => t.id.equals(row.id)))
             .go();
         continue;
@@ -256,6 +255,29 @@ class AddonRepository {
     await _db.into(_db.settingEntries).insertOnConflictUpdate(
           SettingEntriesCompanion.insert(
             key: _migrationKey,
+            value: 'true',
+          ),
+        );
+  }
+
+  /// Ensures users upgrading from Muvio v1.0.0–v1.0.4 automatically get
+  /// Nuvio Direct HTTP scrapers + Torrentio Lite enabled out-of-the-box.
+  Future<void> _migrateNuvioDirectV5IfNeeded() async {
+    final flag = await (_db.select(_db.settingEntries)
+          ..where((t) => t.key.equals(_nuvioDirectMigrationKey)))
+        .getSingleOrNull();
+    if (flag != null) return;
+
+    final defaults = SeedCatalogData.defaultProposedAddons();
+    for (final def in defaults) {
+      if (def.installed && def.enabled) {
+        await _saveAddon(def);
+      }
+    }
+
+    await _db.into(_db.settingEntries).insertOnConflictUpdate(
+          SettingEntriesCompanion.insert(
+            key: _nuvioDirectMigrationKey,
             value: 'true',
           ),
         );

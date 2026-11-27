@@ -66,7 +66,8 @@ class UrlSecurityValidator {
 
   static bool isSafeStreamUrl(String rawUrl) {
     final trimmed = rawUrl.trim();
-    if (trimmed.startsWith('magnet:?')) {
+    if (trimmed.startsWith('magnet:?') ||
+        trimmed.toLowerCase().startsWith('data:')) {
       return true;
     }
     final uri = Uri.tryParse(trimmed);

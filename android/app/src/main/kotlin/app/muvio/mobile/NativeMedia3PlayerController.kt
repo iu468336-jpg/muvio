@@ -9,40 +9,91 @@ import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.TransferListener
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.view.TextureRegistry
+import okhttp3.OkHttpClient
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
+import java.util.Locale
+import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
 /**
- * Native AndroidX Media3 (`ExoPlayer` + Jellyfin FFmpeg Audio Decoder) playback bridge
+ * Nuvio-grade AndroidX Media3 (`ExoPlayer` + Jellyfin FFmpeg Audio Decoder) playback engine
  * backed by Flutter's OpenGL ES `SurfaceTextureEntry` (`createSurfaceTexture()`).
  *
- * Why `createSurfaceTexture()` instead of `createSurfaceProducer()`?
- * Because `EnableImpeller = false` runs Flutter on Skia OpenGL ES! On Android 10–15
- * (`SDK_INT >= 29`), `createSurfaceProducer()` allocates an `ImageReaderSurfaceProducer`
- * (`AHardwareBuffer` + `MAX_IMAGES = 5`), which triggers `SIGSEGV` in MediaTek/Mali
- * `Gralloc` (`validateBufferSize` stride mismatch, Flutter #160899) and `OMX` buffer-count
- * crashes on Huawei/Unisoc/Qualcomm 32-bit `armeabi-v7a` decoders (Flutter #166481).
- * `SurfaceTextureEntry` (`GLConsumer`) has zero `maxImages` limit, zero `HardwareBuffer`
- * stride bugs, and zero-copy OpenGL ES composition in Skia!
+ * Key capabilities matching NuvioMobile:
+ * 1. Trust-all OkHttp Media3 DataSource with custom `Referer`/`Origin`/`Cookie`/`User-Agent`
+ *    headers (while stripping fixed `Range` headers so Media3 manages byte-range seeks cleanly).
+ * 2. 65-second read timeout on `127.0.0.1` / `localhost` so P2P piece fetching never prematurely
+ *    triggers `PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT`.
+ * 3. `BufferedReadDataSource` (64 KiB read-ahead) + `InlineDataUriDataSource` (`data:` HLS support).
+ * 4. `DefaultExtractorsFactory` with `FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS` + `constantBitrateSeeking`.
+ * 5. External WebVTT / SRT / ASS subtitle sidecar injection (`MediaItem.SubtitleConfiguration`).
  */
 @OptIn(UnstableApi::class)
 class NativeMedia3PlayerController(
     private val context: Context,
     private val textureRegistry: TextureRegistry
 ) {
+    companion object {
+        private const val DEFAULT_USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+        private val remoteOkHttpClient: OkHttpClient by lazy { buildMediaOkHttpClient(readTimeoutSec = 45L) }
+        private val loopbackOkHttpClient: OkHttpClient by lazy { buildMediaOkHttpClient(readTimeoutSec = 65L) }
+
+        private fun buildMediaOkHttpClient(readTimeoutSec: Long): OkHttpClient {
+            val builder = OkHttpClient.Builder()
+                .connectTimeout(20L, TimeUnit.SECONDS)
+                .readTimeout(readTimeoutSec, TimeUnit.SECONDS)
+                .writeTimeout(20L, TimeUnit.SECONDS)
+                .followRedirects(true)
+                .followSslRedirects(true)
+                .retryOnConnectionFailure(true)
+
+            try {
+                val trustAllCerts = arrayOf<TrustManager>(
+                    object : X509TrustManager {
+                        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+                        override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+                        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+                    }
+                )
+                val sslContext = SSLContext.getInstance("TLS").apply {
+                    init(null, trustAllCerts, SecureRandom())
+                }
+                builder.sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as X509TrustManager)
+                builder.hostnameVerifier { _, _ -> true }
+            } catch (_: Throwable) {
+            }
+
+            return builder.build()
+        }
+    }
+
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private var exoPlayer: ExoPlayer? = null
@@ -96,6 +147,7 @@ class NativeMedia3PlayerController(
             when (method) {
                 "open" -> {
                     val url = args?.get("url") as? String ?: ""
+                    val filename = args?.get("filename") as? String
                     val rawHeaders = args?.get("headers") as? Map<*, *>
                     val headers = HashMap<String, String>()
                     if (rawHeaders != null) {
@@ -105,11 +157,33 @@ class NativeMedia3PlayerController(
                             }
                         }
                     }
+
+                    val rawSubs = args?.get("subtitles") as? List<*>
+                    val externalSubs = ArrayList<Map<String, String>>()
+                    if (rawSubs != null) {
+                        for (item in rawSubs) {
+                            if (item is Map<*, *>) {
+                                val subUrl = item["url"]?.toString()?.trim() ?: ""
+                                if (subUrl.isNotEmpty()) {
+                                    externalSubs.add(
+                                        mapOf(
+                                            "url" to subUrl,
+                                            "lang" to (item["lang"]?.toString() ?: "en"),
+                                            "label" to (item["label"]?.toString() ?: "Sous-titres")
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     val startPosMs = (args?.get("startPositionMs") as? Number)?.toLong() ?: 0L
                     val preferSoftware = args?.get("preferSoftware") as? Boolean ?: false
                     val info = openStream(
                         url = url,
+                        filename = filename,
                         headers = headers,
+                        externalSubtitles = externalSubs,
                         startPositionMs = startPosMs,
                         preferSoftware = preferSoftware
                     )
@@ -178,13 +252,14 @@ class NativeMedia3PlayerController(
 
     private fun openStream(
         url: String,
+        filename: String?,
         headers: Map<String, String>,
+        externalSubtitles: List<Map<String, String>>,
         startPositionMs: Long,
         preferSoftware: Boolean
     ): Map<String, Any> {
         mainHandler.removeCallbacks(positionPoller)
 
-        // Release any previous ExoPlayer instance before binding a fresh session
         exoPlayer?.let { old ->
             try {
                 old.clearVideoSurface()
@@ -214,32 +289,89 @@ class NativeMedia3PlayerController(
             videoSurface = surface
         }
 
-        val userAgent = headers["User-Agent"]
-            ?: "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
-
-        val httpFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent(userAgent)
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(20_000)
-            .setReadTimeoutMs(45_000)
-
-        if (headers.isNotEmpty()) {
-            httpFactory.setDefaultRequestProperties(headers)
+        // Sanitize headers: extract User-Agent and strip any fixed Range header so Media3 can seek freely
+        var userAgent = DEFAULT_USER_AGENT
+        val cleanHeaders = HashMap<String, String>()
+        for ((k, v) in headers) {
+            val trimmedKey = k.trim()
+            val trimmedVal = v.trim()
+            if (trimmedKey.isEmpty() || trimmedVal.isEmpty()) continue
+            when {
+                trimmedKey.equals("User-Agent", ignoreCase = true) -> userAgent = trimmedVal
+                trimmedKey.equals("Range", ignoreCase = true) -> Unit
+                else -> cleanHeaders[trimmedKey] = trimmedVal
+            }
         }
 
-        val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
-        val mediaSourceFactory = DefaultMediaSourceFactory(context)
-            .setDataSourceFactory(dataSourceFactory)
+        val parsedUri = Uri.parse(url)
+        val host = parsedUri.host?.lowercase(Locale.US) ?: ""
+        val isLoopback = host == "127.0.0.1" || host == "localhost" || host == "::1"
 
-        // Bounded RAM buffers (max 16 MB) so 32-bit armeabi-v7a phones with 2 GB RAM never OOM
+        val okHttpClient = if (isLoopback) loopbackOkHttpClient else remoteOkHttpClient
+        val httpFactory = OkHttpDataSource.Factory(okHttpClient)
+            .setUserAgent(userAgent)
+
+        if (cleanHeaders.isNotEmpty() && !isLoopback) {
+            httpFactory.setDefaultRequestProperties(cleanHeaders)
+        }
+
+        val baseDefaultFactory = DefaultDataSource.Factory(context, httpFactory)
+        val routedDataSourceFactory = DataSource.Factory {
+            object : DataSource {
+                private val defaultSource = baseDefaultFactory.createDataSource()
+                private val dataUriSource = InlineDataUriDataSource()
+                private var active: DataSource? = null
+
+                override fun addTransferListener(transferListener: TransferListener) {
+                    defaultSource.addTransferListener(transferListener)
+                }
+
+                override fun open(dataSpec: DataSpec): Long {
+                    val chosen = if (dataSpec.uri.scheme.equals("data", ignoreCase = true)) {
+                        dataUriSource
+                    } else {
+                        defaultSource
+                    }
+                    active = chosen
+                    return chosen.open(dataSpec)
+                }
+
+                override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                    return active?.read(buffer, offset, length) ?: C.RESULT_END_OF_INPUT
+                }
+
+                override fun getUri(): Uri? = active?.uri
+
+                override fun getResponseHeaders(): Map<String, List<String>> =
+                    active?.responseHeaders ?: emptyMap()
+
+                override fun close() {
+                    try {
+                        active?.close()
+                    } finally {
+                        active = null
+                    }
+                }
+            }
+        }
+
+        val bufferedDataSourceFactory = BufferedReadDataSource.Factory(routedDataSourceFactory)
+
+        val extractorsFactory = DefaultExtractorsFactory()
+            .setTsExtractorFlags(DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS)
+            .setConstantBitrateSeekingEnabled(true)
+
+        val mediaSourceFactory = DefaultMediaSourceFactory(bufferedDataSourceFactory, extractorsFactory)
+
+        // Fast-start RAM buffer config tuned for instant startup + 32-bit ARM safety
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ 4_000,
-                /* maxBufferMs = */ 18_000,
-                /* bufferForPlaybackMs = */ 1_200,
-                /* bufferForPlaybackAfterRebufferMs = */ 2_500
+                /* minBufferMs = */ 8_000,
+                /* maxBufferMs = */ 24_000,
+                /* bufferForPlaybackMs = */ 900,
+                /* bufferForPlaybackAfterRebufferMs = */ 2_000
             )
-            .setTargetBufferBytes(16 * 1024 * 1024)
+            .setTargetBufferBytes(20 * 1024 * 1024)
             .setPrioritizeTimeOverSizeThresholds(false)
             .build()
 
@@ -255,7 +387,8 @@ class NativeMedia3PlayerController(
 
         val selector = DefaultTrackSelector(context).apply {
             parameters = buildUponParameters()
-                .setPreferredTextLanguage("fr")
+                .setPreferredAudioLanguages("fr", "fra", "fre", "en", "eng")
+                .setPreferredTextLanguages("fr", "fra", "fre", "en", "eng")
                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitlesEnabled)
                 .build()
         }
@@ -341,13 +474,29 @@ class NativeMedia3PlayerController(
 
         player.setVideoSurface(surface)
 
-        val itemBuilder = MediaItem.Builder().setUri(Uri.parse(url))
-        val lowerUrl = url.lowercase()
-        when {
-            lowerUrl.contains(".m3u8") -> itemBuilder.setMimeType("application/x-mpegURL")
-            lowerUrl.contains(".mpd") -> itemBuilder.setMimeType("application/dash+xml")
+        val itemBuilder = MediaItem.Builder().setUri(parsedUri)
+        inferVideoMimeType(url, filename)?.let { mime ->
+            itemBuilder.setMimeType(mime)
         }
 
+        if (externalSubtitles.isNotEmpty()) {
+            val subConfigs = externalSubtitles.mapIndexed { idx, sub ->
+                val subUrl = sub["url"] ?: ""
+                val lang = sub["lang"] ?: "en"
+                val label = sub["label"] ?: lang.uppercase(Locale.US)
+                val isFrench = lang.startsWith("fr", ignoreCase = true) ||
+                    label.contains("fran", ignoreCase = true)
+                MediaItem.SubtitleConfiguration.Builder(Uri.parse(subUrl))
+                    .setMimeType(inferSubtitleMimeType(subUrl))
+                    .setLanguage(lang)
+                    .setLabel(label)
+                    .setSelectionFlags(if (idx == 0 || isFrench) C.SELECTION_FLAG_DEFAULT else 0)
+                    .build()
+            }
+            itemBuilder.setSubtitleConfigurations(subConfigs)
+        }
+
+        audioTrackIndex = 0
         player.setMediaItem(itemBuilder.build())
         if (startPositionMs > 0L) {
             player.seekTo(startPositionMs)
@@ -356,12 +505,51 @@ class NativeMedia3PlayerController(
         player.prepare()
 
         exoPlayer = player
-        mainHandler.postDelayed(positionPoller, 400L)
+        mainHandler.postDelayed(positionPoller, 350L)
 
         return mapOf(
             "textureId" to entry.id(),
             "aspectRatio" to (16.0 / 9.0)
         )
+    }
+
+    private fun inferVideoMimeType(url: String, filename: String?): String? {
+        val lowerUrl = url.lowercase(Locale.US)
+        if (lowerUrl.startsWith("data:")) {
+            if (lowerUrl.contains("mpegurl") || lowerUrl.contains("m3u8")) {
+                return MimeTypes.APPLICATION_M3U8
+            }
+        }
+        val pathOnly = lowerUrl.substringBefore('?').substringBefore('#')
+        val hint = (filename ?: "").lowercase(Locale.US)
+
+        return when {
+            pathOnly.endsWith(".m3u8") ||
+                lowerUrl.contains(".m3u8?") ||
+                lowerUrl.contains("/hls/") ||
+                lowerUrl.contains("format=m3u8") ||
+                lowerUrl.contains("type=m3u8") ||
+                hint.endsWith(".m3u8") -> MimeTypes.APPLICATION_M3U8
+            pathOnly.endsWith(".mpd") ||
+                lowerUrl.contains(".mpd?") ||
+                hint.endsWith(".mpd") -> MimeTypes.APPLICATION_MPD
+            pathOnly.endsWith(".ism/manifest") ||
+                hint.endsWith(".ism") -> MimeTypes.APPLICATION_SS
+            pathOnly.endsWith(".mkv") || pathOnly.endsWith(".webm") -> MimeTypes.VIDEO_MATROSKA
+            pathOnly.endsWith(".mp4") || pathOnly.endsWith(".m4v") -> MimeTypes.VIDEO_MP4
+            // Do NOT force container MIME on `127.0.0.1` P2P stream URLs — let DefaultExtractorsFactory sniff!
+            else -> null
+        }
+    }
+
+    private fun inferSubtitleMimeType(subUrl: String): String {
+        val clean = subUrl.lowercase(Locale.US).substringBefore('?').substringBefore('#')
+        return when {
+            clean.endsWith(".srt") -> MimeTypes.APPLICATION_SUBRIP
+            clean.endsWith(".ass") || clean.endsWith(".ssa") -> MimeTypes.TEXT_SSA
+            clean.endsWith(".ttml") || clean.endsWith(".xml") -> MimeTypes.APPLICATION_TTML
+            else -> MimeTypes.TEXT_VTT
+        }
     }
 
     private fun cycleAudioTrack(): String {
@@ -374,13 +562,16 @@ class NativeMedia3PlayerController(
         audioTrackIndex = (audioTrackIndex + 1) % groups.size
         val chosen = groups[audioTrackIndex]
         val format = chosen.getTrackFormat(0)
-        val lang = format.language ?: format.label ?: "Piste ${audioTrackIndex + 1}"
-        if (format.language != null) {
-            ts.parameters = ts.buildUponParameters()
-                .setPreferredAudioLanguage(format.language)
-                .build()
-        }
-        return lang.uppercase()
+        val label = format.label?.takeIf { it.isNotBlank() }
+            ?: format.language?.takeIf { it.isNotBlank() }
+            ?: "Piste ${audioTrackIndex + 1}"
+
+        ts.parameters = ts.buildUponParameters()
+            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+            .addOverride(TrackSelectionOverride(chosen.mediaTrackGroup, 0))
+            .build()
+
+        return label.uppercase(Locale.US)
     }
 
     private fun sendEvent(payload: Map<String, Any>) {

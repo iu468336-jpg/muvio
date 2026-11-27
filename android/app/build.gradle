@@ -22,6 +22,8 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+        // NuvioEngine & QuickJS AARs are compiled with Kotlin 2.3 metadata while their JVM bytecode targets Java 11/17.
+        freeCompilerArgs += ["-Xskip-metadata-version-check"]
     }
 
     defaultConfig {
@@ -69,21 +71,23 @@ android {
 }
 
 dependencies {
+    implementation(files("libs/lib-nuvio-engine-android-0.1.6.aar"))
+    implementation(files("libs/quickjs-kt-android-1.0.5-nuvio.aar"))
+
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.jsoup:jsoup:1.18.3")
+
     def media3Version = "1.6.1"
     implementation("androidx.media3:media3-exoplayer:${media3Version}")
     implementation("androidx.media3:media3-exoplayer-hls:${media3Version}")
     implementation("androidx.media3:media3-exoplayer-dash:${media3Version}")
+    implementation("androidx.media3:media3-exoplayer-smoothstreaming:${media3Version}")
     implementation("androidx.media3:media3-datasource:${media3Version}")
+    implementation("androidx.media3:media3-datasource-okhttp:${media3Version}")
     implementation("androidx.media3:media3-extractor:${media3Version}")
     implementation("androidx.media3:media3-common:${media3Version}")
     implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.6.1+1")
-
-    def libtorrent4jVersion = "2.1.0-38"
-    implementation("org.libtorrent4j:libtorrent4j:${libtorrent4jVersion}")
-    implementation("org.libtorrent4j:libtorrent4j-android-arm64:${libtorrent4jVersion}")
-    implementation("org.libtorrent4j:libtorrent4j-android-arm:${libtorrent4jVersion}")
-    implementation("org.libtorrent4j:libtorrent4j-android-x86_64:${libtorrent4jVersion}")
-    implementation("org.nanohttpd:nanohttpd:2.3.1")
 }
 
 flutter {
