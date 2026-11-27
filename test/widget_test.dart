@@ -10,6 +10,7 @@ import 'package:muvio/data/models/app_settings.dart';
 import 'package:muvio/data/models/media_models.dart';
 import 'package:muvio/data/models/seed_catalog.dart';
 import 'package:muvio/data/providers/app_providers.dart';
+import 'package:muvio/data/providers/nuvio_plugin_bridge.dart';
 import 'package:muvio/data/providers/stremio_addon_client.dart';
 import 'package:muvio/data/repositories/addon_repository.dart';
 import 'package:muvio/data/repositories/library_repository.dart';
@@ -170,11 +171,25 @@ class _InMemorySettingsRepo implements SettingsRepository {
   }
 }
 
+class _FakeNuvioPluginBridge extends NuvioPluginBridge {
+  const _FakeNuvioPluginBridge();
+
+  @override
+  Future<Result<List<StreamSource>>> fetchStreams({
+    required InstalledAddon addon,
+    required String type,
+    required String mediaId,
+  }) async =>
+      const Success([]);
+}
+
 void main() {
   setUpAll(AppTheme.configureFonts);
 
   List<Override> testOverrides() => [
         stremioClientProvider.overrideWithValue(const _FakeMediaProvider()),
+        nuvioPluginBridgeProvider
+            .overrideWithValue(const _FakeNuvioPluginBridge()),
         addonRepositoryProvider.overrideWithValue(_InMemoryAddonRepo()),
         libraryRepositoryProvider.overrideWithValue(_InMemoryLibraryRepo()),
         settingsRepositoryProvider.overrideWithValue(_InMemorySettingsRepo()),
