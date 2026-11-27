@@ -52,8 +52,8 @@ jobs:
 
       - name: Rename APKs with Muvio version
         run: |
-          VERSION="${GITHUB_REF_NAME:-v1.0.3}"
-          if [[ "$VERSION" != v* ]]; then VERSION="v1.0.3"; fi
+          VERSION="${GITHUB_REF_NAME:-v1.0.4}"
+          if [[ "$VERSION" != v* ]]; then VERSION="v1.0.4"; fi
           mkdir -p dist-apks
           cp build/app/outputs/flutter-apk/app-release.apk "dist-apks/muvio-${VERSION}-universal.apk"
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk "dist-apks/muvio-${VERSION}-armeabi-v7a.apk"

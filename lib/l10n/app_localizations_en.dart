@@ -224,7 +224,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get viewOnGithub => 'View on GitHub';
 
   @override
-  String get versionFooter => 'v1.0.2 · Open Source';
+  String get versionFooter => 'v1.0.4 · Open Source';
 
   @override
   String get selectSourceTitle => 'Select Source';
@@ -265,5 +265,5 @@ class AppLocalizationsEn extends AppLocalizations {
       'Zero telemetry, zero trackers, zero ads. Your data stays strictly on your device.';
 
   @override
-  String get upToDate => 'You are running the latest version (v1.0.0).';
+  String get upToDate => 'You are running the latest version (v1.0.4).';
 }

@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.view.Surface
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -11,7 +12,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
-import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
@@ -27,11 +27,16 @@ import io.flutter.view.TextureRegistry
 
 /**
  * Native AndroidX Media3 (`ExoPlayer` + Jellyfin FFmpeg Audio Decoder) playback bridge
- * backed by Flutter's `SurfaceProducer` texture.
+ * backed by Flutter's OpenGL ES `SurfaceTextureEntry` (`createSurfaceTexture()`).
  *
- * Replaces `media_kit` (`libmpv` Dart FFI callbacks) so video playback on 32-bit `armeabi-v7a`
- * and 64-bit `arm64-v8a` Android phones uses hardware `MediaCodec` + FFmpeg surround audio
- * decoding with zero Dart FFI callback crashes and zero UI-thread ANR!
+ * Why `createSurfaceTexture()` instead of `createSurfaceProducer()`?
+ * Because `EnableImpeller = false` runs Flutter on Skia OpenGL ES! On Android 10–15
+ * (`SDK_INT >= 29`), `createSurfaceProducer()` allocates an `ImageReaderSurfaceProducer`
+ * (`AHardwareBuffer` + `MAX_IMAGES = 5`), which triggers `SIGSEGV` in MediaTek/Mali
+ * `Gralloc` (`validateBufferSize` stride mismatch, Flutter #160899) and `OMX` buffer-count
+ * crashes on Huawei/Unisoc/Qualcomm 32-bit `armeabi-v7a` decoders (Flutter #166481).
+ * `SurfaceTextureEntry` (`GLConsumer`) has zero `maxImages` limit, zero `HardwareBuffer`
+ * stride bugs, and zero-copy OpenGL ES composition in Skia!
  */
 @OptIn(UnstableApi::class)
 class NativeMedia3PlayerController(
@@ -42,7 +47,8 @@ class NativeMedia3PlayerController(
 
     private var exoPlayer: ExoPlayer? = null
     private var trackSelector: DefaultTrackSelector? = null
-    private var surfaceProducer: TextureRegistry.SurfaceProducer? = null
+    private var textureEntry: TextureRegistry.SurfaceTextureEntry? = null
+    private var videoSurface: Surface? = null
     private var eventSink: EventChannel.EventSink? = null
     private var audioTrackIndex: Int = 0
     private var subtitlesEnabled: Boolean = true
@@ -90,8 +96,15 @@ class NativeMedia3PlayerController(
             when (method) {
                 "open" -> {
                     val url = args?.get("url") as? String ?: ""
-                    @Suppress("UNCHECKED_CAST")
-                    val headers = (args?.get("headers") as? Map<String, String>) ?: emptyMap()
+                    val rawHeaders = args?.get("headers") as? Map<*, *>
+                    val headers = HashMap<String, String>()
+                    if (rawHeaders != null) {
+                        for ((k, v) in rawHeaders) {
+                            if (k != null && v != null) {
+                                headers[k.toString()] = v.toString()
+                            }
+                        }
+                    }
                     val startPosMs = (args?.get("startPositionMs") as? Number)?.toLong() ?: 0L
                     val preferSoftware = args?.get("preferSoftware") as? Boolean ?: false
                     val info = openStream(
@@ -154,6 +167,11 @@ class NativeMedia3PlayerController(
                 else -> result.notImplemented()
             }
         } catch (t: Throwable) {
+            CrashLogManager.recordLog(
+                context,
+                source = "NativeMedia3[$method]",
+                trace = t.stackTraceToString()
+            )
             result.error("PLAYER_ERR", t.message ?: t.toString(), null)
         }
     }
@@ -166,33 +184,7 @@ class NativeMedia3PlayerController(
     ): Map<String, Any> {
         mainHandler.removeCallbacks(positionPoller)
 
-        var producer = surfaceProducer
-        if (producer == null) {
-            producer = textureRegistry.createSurfaceProducer()
-            producer.setSize(1280, 720)
-            producer.setCallback(object : TextureRegistry.SurfaceProducer.Callback {
-                override fun onSurfaceAvailable() {
-                    val p = exoPlayer
-                    val sp = surfaceProducer
-                    if (p != null && sp != null) {
-                        try {
-                            p.setVideoSurface(sp.surface)
-                        } catch (_: Throwable) {
-                        }
-                    }
-                }
-
-                override fun onSurfaceCleanup() {
-                    try {
-                        exoPlayer?.clearVideoSurface()
-                    } catch (_: Throwable) {
-                    }
-                }
-            })
-            surfaceProducer = producer
-        }
-
-        // Release any previous ExoPlayer instance while reusing the active SurfaceProducer cleanly
+        // Release any previous ExoPlayer instance before binding a fresh session
         exoPlayer?.let { old ->
             try {
                 old.clearVideoSurface()
@@ -203,14 +195,33 @@ class NativeMedia3PlayerController(
         }
         exoPlayer = null
 
+        var entry = textureEntry
+        var surface = videoSurface
+        if (entry == null || surface == null || !surface.isValid) {
+            try {
+                surface?.release()
+            } catch (_: Throwable) {
+            }
+            try {
+                entry?.release()
+            } catch (_: Throwable) {
+            }
+            entry = textureRegistry.createSurfaceTexture()
+            val st = entry.surfaceTexture()
+            st.setDefaultBufferSize(1280, 720)
+            surface = Surface(st)
+            textureEntry = entry
+            videoSurface = surface
+        }
+
         val userAgent = headers["User-Agent"]
             ?: "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
 
         val httpFactory = DefaultHttpDataSource.Factory()
             .setUserAgent(userAgent)
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(18_000)
-            .setReadTimeoutMs(30_000)
+            .setConnectTimeoutMs(20_000)
+            .setReadTimeoutMs(45_000)
 
         if (headers.isNotEmpty()) {
             httpFactory.setDefaultRequestProperties(headers)
@@ -269,7 +280,7 @@ class NativeMedia3PlayerController(
                 val h = videoSize.height
                 if (w > 0 && h > 0) {
                     try {
-                        surfaceProducer?.setSize(w, h)
+                        textureEntry?.surfaceTexture()?.setDefaultBufferSize(w, h)
                     } catch (_: Throwable) {
                     }
                     val aspect = if (videoSize.pixelWidthHeightRatio > 0f) {
@@ -313,6 +324,11 @@ class NativeMedia3PlayerController(
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                CrashLogManager.recordLog(
+                    context,
+                    source = "ExoPlayerError[${error.errorCodeName}]",
+                    trace = "${error.message}\n${error.cause?.stackTraceToString() ?: ""}"
+                )
                 sendEvent(
                     mapOf(
                         "event" to "error",
@@ -323,7 +339,7 @@ class NativeMedia3PlayerController(
             }
         })
 
-        player.setVideoSurface(producer.surface)
+        player.setVideoSurface(surface)
 
         val itemBuilder = MediaItem.Builder().setUri(Uri.parse(url))
         val lowerUrl = url.lowercase()
@@ -343,7 +359,7 @@ class NativeMedia3PlayerController(
         mainHandler.postDelayed(positionPoller, 400L)
 
         return mapOf(
-            "textureId" to producer.id(),
+            "textureId" to entry.id(),
             "aspectRatio" to (16.0 / 9.0)
         )
     }
@@ -389,12 +405,20 @@ class NativeMedia3PlayerController(
         exoPlayer = null
         trackSelector = null
 
-        surfaceProducer?.let { sp ->
+        videoSurface?.let { s ->
             try {
-                sp.release()
+                s.release()
             } catch (_: Throwable) {
             }
         }
-        surfaceProducer = null
+        videoSurface = null
+
+        textureEntry?.let { entry ->
+            try {
+                entry.release()
+            } catch (_: Throwable) {
+            }
+        }
+        textureEntry = null
     }
 }

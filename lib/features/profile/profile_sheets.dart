@@ -99,7 +99,7 @@ void _showPlaybackSheet(
           const SizedBox(height: 14),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
-            title: const Text('Décodage matériel (libmpv HW+)'),
+            title: const Text('Décodage matériel (MediaCodec HW+)'),
             value: settings.decoderMode == VideoDecoderMode.hardware,
             onChanged: (hw) {
               ref.read(appSettingsControllerProvider.notifier).updateSettings(
@@ -221,13 +221,69 @@ void _showCacheAndUpdatesSheet(BuildContext context, WidgetRef ref) {
   );
 }
 
+Future<void> _showCrashLogDialog(BuildContext context) async {
+  final logText = await DiagnosticsBridge.readCrashLog();
+  if (!context.mounted) return;
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: AppColors.surface,
+      title: const Text('Journal de diagnostic', style: AppTypography.h2),
+      content: SizedBox(
+        width: double.maxFinite,
+        height: 280,
+        child: SingleChildScrollView(
+          child: SelectableText(
+            logText.trim().isEmpty
+                ? 'Aucune erreur enregistrée sur cet appareil.'
+                : logText,
+            style: AppTypography.caption.copyWith(
+              fontFamily: 'monospace',
+              fontSize: 11,
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        if (logText.trim().isNotEmpty) ...[
+          TextButton(
+            onPressed: () async {
+              await DiagnosticsBridge.clearCrashLog();
+              if (ctx.mounted) Navigator.of(ctx).pop();
+            },
+            child: const Text('Effacer'),
+          ),
+          TextButton(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: logText));
+              if (ctx.mounted) {
+                Navigator.of(ctx).pop();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Journal copié dans le presse-papiers'),
+                  ),
+                );
+              }
+            },
+            child: const Text('Copier'),
+          ),
+        ],
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: const Text('Fermer'),
+        ),
+      ],
+    ),
+  );
+}
+
 void _showAboutDialog(BuildContext context) {
   final l10n = AppLocalizations.of(context);
   showDialog<void>(
     context: context,
     builder: (ctx) => AlertDialog(
       backgroundColor: AppColors.surface,
-      title: const Text('MUVIO · v1.0.1', style: AppTypography.h1),
+      title: const Text('MUVIO · v1.0.4', style: AppTypography.h1),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,

@@ -3,9 +3,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:muvio/app.dart';
 import 'package:muvio/core/theme/app_theme.dart';
+import 'package:muvio/core/utils/diagnostics_bridge.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  DiagnosticsBridge.installGlobalErrorHandlers();
   AppTheme.configureFonts();
 
   // Cap decoded image LRU memory cache to 64 MB for optimal 32-bit mobile stability

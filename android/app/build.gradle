@@ -78,10 +78,11 @@ dependencies {
     implementation("androidx.media3:media3-common:${media3Version}")
     implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.6.1+1")
 
-    implementation("org.libtorrent4j:libtorrent4j:2.1.0-31")
-    implementation("org.libtorrent4j:libtorrent4j-android-arm64:2.1.0-31")
-    implementation("org.libtorrent4j:libtorrent4j-android-arm:2.1.0-31")
-    implementation("org.libtorrent4j:libtorrent4j-android-x86_64:2.1.0-31")
+    def libtorrent4jVersion = "2.1.0-38"
+    implementation("org.libtorrent4j:libtorrent4j:${libtorrent4jVersion}")
+    implementation("org.libtorrent4j:libtorrent4j-android-arm64:${libtorrent4jVersion}")
+    implementation("org.libtorrent4j:libtorrent4j-android-arm:${libtorrent4jVersion}")
+    implementation("org.libtorrent4j:libtorrent4j-android-x86_64:${libtorrent4jVersion}")
     implementation("org.nanohttpd:nanohttpd:2.3.1")
 }
 

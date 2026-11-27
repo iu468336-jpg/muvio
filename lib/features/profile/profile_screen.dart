@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
@@ -7,6 +8,7 @@ import 'package:muvio/core/storage/secure_storage_service.dart';
 import 'package:muvio/core/theme/app_colors.dart';
 import 'package:muvio/core/theme/app_spacing.dart';
 import 'package:muvio/core/theme/app_typography.dart';
+import 'package:muvio/core/utils/diagnostics_bridge.dart';
 import 'package:muvio/data/models/addon_models.dart';
 import 'package:muvio/data/models/app_settings.dart';
 import 'package:muvio/data/providers/app_providers.dart';
@@ -177,6 +179,12 @@ class ProfileScreen extends ConsumerWidget {
                   icon: LucideIcons.refreshCw,
                   label: l10n.settingsUpdates,
                   onTap: () => _showCacheAndUpdatesSheet(context, ref),
+                ),
+                const Divider(),
+                _SettingsRow(
+                  icon: LucideIcons.terminal,
+                  label: 'Journal de diagnostic',
+                  onTap: () => _showCrashLogDialog(context),
                 ),
                 const Divider(),
                 _SettingsRow(

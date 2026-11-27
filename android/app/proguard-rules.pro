@@ -21,6 +21,8 @@
 # Keep AndroidX Media3 + Jellyfin FFmpeg decoder JNI bindings
 -keep class androidx.media3.** { *; }
 -dontwarn androidx.media3.**
+-keep class org.jellyfin.media3.** { *; }
+-dontwarn org.jellyfin.media3.**
 -keepclasseswithmembernames class * {
     native <methods>;
 }

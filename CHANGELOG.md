@@ -2,6 +2,22 @@
 
 Toutes les modifications notables de **Muvio** sont documentées dans ce fichier.
 
+## [1.0.4] - 2026-11-26
+
+### Élimination définitive du crash natif (`SIGSEGV`) à la sélection d'un flux vidéo et fiabilisation de la lecture (`armeabi-v7a` & `arm64-v8a`)
+- **Correction du Use-After-Free critique SWIG JNI dans `LocalTorrentStreamController.kt` (`alert.handle()` -> `SIGSEGV`)** :
+  - Dans `libtorrent4j`, `TorrentAlert.handle()` retourne un pointeur SWIG non-propriétaire (`swigCMemOwn = false`) pointant directement à l'intérieur de l'objet C++ temporaire `torrent_alert`, lequel est détruit par `SessionManager.alertsLoop()` (`v.clear()`) quelques millisecondes plus tard. Conserver `activeHandle = alert.handle()` provoquait un crash natif `SIGSEGV` ~650 ms après la sélection d'un flux torrent, avant même le démarrage de la vidéo.
+  - Désormais, seul le hash hexadécimal (`infoHash().toHex()`) est extrait pendant l'alerte, et chaque opération résout systématiquement un `TorrentHandle` propriétaire alloué sur le tas (`swigCMemOwn = true`) via `sessionManager.find(Sha1Hash.parseHex(hex))`, exactement comme dans LibreTorrent 4.1.1.
+- **Mise à niveau vers `libtorrent4j 2.1.0-38` (compatible API 24+ `armeabi-v7a`) & correctif réseau Android 11–15 (`enable_ip_notifier = false`)** :
+  - Mise à jour de `libtorrent4j` de `2.1.0-31` vers **`2.1.0-38`** (même moteur que LibreTorrent 4.1.1, sans symbole `LIBC_P` bloquant sur Android 7–8.1).
+  - Désactivation de `enable_ip_notifier` (bloqué par SELinux `NETLINK_ROUTE` sur Android 11–15, ce qui laissait parfois la session bloquée à 0 pair) et configuration explicite de `listenInterfaces` IPv4/IPv6 avec réessai automatique de port et nœuds bootstrap DHT.
+- **Isolation complète du moteur torrent dans un sous-processus Android dédié (`android:process=":torrent"`)** :
+  - `TorrentForegroundService` exécute désormais `libtorrent4j` + `NanoHTTPD` dans un processus système séparé (`:torrent`) relié par `Messenger` IPC (`bindService`), protégeant à 100 % le processus principal Flutter / ExoPlayer contre toute corruption mémoire, conflit de gestionnaire de signaux POSIX ou saturation d'espace d'adressage 32-bit.
+- **Correction du crash `ImageReaderSurfaceProducer` / `Gralloc` sous Skia (`createSurfaceTexture()`)** :
+  - Avec `EnableImpeller = false` (Skia OpenGL ES), l'appel `createSurfaceProducer()` allouait sur Android 10+ un `ImageReaderSurfaceProducer` (`AHardwareBuffer`) provoquant des crashs `Gralloc validateBufferSize` / `OMX` sur puces MediaTek, Mali et HiSilicon 32-bit. `NativeMedia3PlayerController` utilise désormais directement `createSurfaceTexture()` (`GLConsumer` OpenGL ES natif) avec verrouillage `debugForceSurfaceProducerGlTextures = true`.
+- **Journal de diagnostic intégré dans Profil > Paramètres** :
+  - Enregistrement persistant des erreurs non interceptées (Android JVM, processus `:torrent`, ExoPlayer et Flutter/Dart) consultable et copiable en un clic depuis `Profil > Journal de diagnostic`.
+
 ## [1.0.3] - 2026-11-26
 
 ### Correction critique du freeze / crash à la sélection d'une source vidéo (32-bit `armeabi-v7a` & tous téléphones Android)

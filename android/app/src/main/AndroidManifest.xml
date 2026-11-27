@@ -53,6 +53,7 @@
         <service
             android:name=".TorrentForegroundService"
             android:exported="false"
+            android:process=":torrent"
             android:foregroundServiceType="mediaPlayback" />
 
         <meta-data

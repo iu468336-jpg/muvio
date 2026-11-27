@@ -6,6 +6,7 @@ import org.libtorrent4j.Priority
 import org.libtorrent4j.SessionManager
 import org.libtorrent4j.SessionParams
 import org.libtorrent4j.SettingsPack
+import org.libtorrent4j.Sha1Hash
 import org.libtorrent4j.TorrentFlags
 import org.libtorrent4j.TorrentHandle
 import org.libtorrent4j.TorrentInfo
@@ -25,15 +26,21 @@ import kotlin.math.min
 
 /**
  * 32-bit `armeabi-v7a` safe, piece-accurate sequential torrent streaming engine
- * powered by `libtorrent4j` (`setPosixDiskIO()`) + `NanoHTTPD`.
+ * powered by `libtorrent4j:2.1.0-38` (`setPosixDiskIO()`) + `NanoHTTPD`, hosted inside
+ * the isolated `:torrent` Android service process (`TorrentForegroundService`).
  *
  * Critical guarantees for mobile stability:
- * 1. Calls `SessionParams(settings).apply { setPosixDiskIO() }` so `libtorrent` NEVER
+ * 1. NEVER retains `alert.handle()` across `SessionManager.alertsLoop()` iterations!
+ *    `TorrentAlert.handle()` returns a non-owning SWIG pointer (`swigCMemOwn = false`)
+ *    into the transient C++ `torrent_alert`, which is destroyed immediately on `v.clear()`.
+ *    Instead, we extract `Sha1Hash(alertHandle.infoHash().toHex())` synchronously inside
+ *    `alert()` and ALWAYS resolve an owned `TorrentHandle` (`swigCMemOwn = true`) via
+ *    `sessionManager.find(infoHash)`.
+ * 2. Disables `enable_ip_notifier` (`false`) per LibreTorrent 4.1.1 so Android 11–15
+ *    SELinux `NETLINK_ROUTE` restrictions never break socket binding or peer discovery,
+ *    and binds explicit IPv4+IPv6 `listenInterfaces` with port retry.
+ * 3. Calls `SessionParams(settings).apply { setPosixDiskIO() }` so `libtorrent` NEVER
  *    memory-maps (`mmap`) multi-gigabyte video torrents into a 32-bit virtual address space.
- * 2. Applies bounded mobile `SettingsPack` limits (`connectionsLimit`, `maxPeerlistSize`,
- *    `maxQueuedDiskBytes`, `aio_threads`) to prevent RAM/socket exhaustion on budget phones.
- * 3. Updates telemetry on a background daemon thread so `getCachedStatus()` is 100%
- *    lock-free and JNI-free when polled from the Android UI thread.
  * 4. Serves byte-accurate HTTP `206 Partial Content` streams via `TorrentPieceInputStream`,
  *    verifying `TorrentHandle.havePiece(pieceIdx)` before reading from `RandomAccessFile`.
  */
@@ -59,7 +66,10 @@ class LocalTorrentStreamController(private val saveDir: File) {
             ".mkv", ".mp4", ".webm", ".avi", ".mov", ".m4v", ".ts", ".m2ts"
         )
 
-        private fun emptyTelemetry(): Map<String, Any> = mapOf(
+        private const val DHT_BOOTSTRAP_NODES =
+            "dht.libtorrent.org:25401,router.bittorrent.com:6881,dht.transmissionbt.com:6881,outer.silotis.us:6881"
+
+        fun emptyTelemetry(): Map<String, Any> = mapOf(
             "hasMetadata" to false,
             "readyToPlay" to false,
             "peers" to 0,
@@ -78,8 +88,13 @@ class LocalTorrentStreamController(private val saveDir: File) {
     @Volatile
     private var cachedTelemetry: Map<String, Any> = emptyTelemetry()
 
+    /**
+     * Hex info-hash (40-char SHA-1) used to obtain a fresh, heap-owned `TorrentHandle`
+     * via `sessionManager.find(Sha1Hash.parseHex(hex))` — NEVER storing a dangling
+     * `alert.handle()` pointer!
+     */
     @Volatile
-    private var activeHandle: TorrentHandle? = null
+    private var activeInfoHashHex: String? = null
 
     @Volatile
     private var selectedFileIdx: Int = -1
@@ -108,6 +123,22 @@ class LocalTorrentStreamController(private val saveDir: File) {
     private val pieceLock = Object()
     private val configLock = Object()
 
+    /**
+     * Safely resolves an owned `TorrentHandle` (`swigCMemOwn = true`) from `SessionManager`.
+     */
+    private fun resolveOwnedHandle(): TorrentHandle? {
+        if (stopped) return null
+        val session = sessionManager ?: return null
+        val hex = activeInfoHashHex ?: return null
+        if (hex.length != 40) return null
+        return try {
+            val h = session.find(Sha1Hash.parseHex(hex))
+            if (h != null && h.isValid) h else null
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
     fun startSequentialStream(
         magnetOrUri: String,
         infoHash: String?,
@@ -119,19 +150,32 @@ class LocalTorrentStreamController(private val saveDir: File) {
         cachedTelemetry = emptyTelemetry()
         cleanOldCacheFiles()
 
+        // Pre-seed infoHash if known (40-char hex)
+        val cleanHex = extractHexInfoHash(magnetOrUri, infoHash)
+        activeInfoHashHex = cleanHex
+
+        val randomPort = 39000 + ((System.currentTimeMillis() and 0x1FFF).toInt())
+
         val settings = SettingsPack()
             .activeDownloads(2)
             .activeSeeds(1)
             .activeLimit(4)
-            .connectionsLimit(55)
-            .maxPeerlistSize(250)
+            .connectionsLimit(60)
+            .maxPeerlistSize(300)
             .maxQueuedDiskBytes(4 * 1024 * 1024)
             .sendBufferWatermark(1024 * 1024)
-            .alertQueueSize(400)
+            .alertQueueSize(1000)
             .stopTrackerTimeout(1)
             .seedingOutgoingConnections(false)
+            .listenInterfaces("0.0.0.0:$randomPort,[::]:$randomPort")
+            .setInteger(settings_pack.int_types.max_retry_port_bind.swigValue(), 12)
+            // CRITICAL on Android 11-15 (SELinux blocks untrusted NETLINK_ROUTE bind):
+            .setBoolean(settings_pack.bool_types.enable_ip_notifier.swigValue(), false)
+            .setString(settings_pack.string_types.dht_bootstrap_nodes.swigValue(), DHT_BOOTSTRAP_NODES)
             .setBoolean(settings_pack.bool_types.enable_dht.swigValue(), true)
             .setBoolean(settings_pack.bool_types.enable_lsd.swigValue(), true)
+            .setBoolean(settings_pack.bool_types.enable_upnp.swigValue(), false)
+            .setBoolean(settings_pack.bool_types.enable_natpmp.swigValue(), false)
             .setBoolean(settings_pack.bool_types.announce_to_all_trackers.swigValue(), true)
             .setBoolean(settings_pack.bool_types.announce_to_all_tiers.swigValue(), true)
             .setBoolean(settings_pack.bool_types.prioritize_partial_pieces.swigValue(), true)
@@ -146,6 +190,8 @@ class LocalTorrentStreamController(private val saveDir: File) {
         params.setPosixDiskIO()
 
         val session = SessionManager(false)
+        sessionManager = session
+
         session.addListener(object : AlertListener {
             override fun types(): IntArray = intArrayOf(
                 AlertType.ADD_TORRENT.swig(),
@@ -158,26 +204,33 @@ class LocalTorrentStreamController(private val saveDir: File) {
                 try {
                     when (alert) {
                         is AddTorrentAlert -> {
-                            val h = alert.handle()
-                            if (h != null && h.isValid) {
-                                activeHandle = h
-                                h.resume()
+                            // Extract pure Java String hex synchronously before alert C++ object is freed!
+                            val hex = alert.handle()?.infoHash()?.toHex()
+                            if (!hex.isNullOrBlank() && hex.length == 40) {
+                                activeInfoHashHex = hex.lowercase()
+                            }
+                            val owned = resolveOwnedHandle()
+                            if (owned != null && owned.isValid) {
+                                owned.resume()
                                 try {
-                                    h.forceReannounce()
-                                    h.forceDHTAnnounce()
-                                    h.forceLSDAnnounce()
+                                    owned.forceReannounce()
+                                    owned.forceDHTAnnounce()
+                                    owned.forceLSDAnnounce()
                                 } catch (_: Throwable) {
                                 }
-                                if (h.status().hasMetadata()) {
-                                    configureTargetFile(h, fileIndex)
+                                if (owned.status().hasMetadata()) {
+                                    configureTargetFile(owned, fileIndex)
                                 }
                             }
                         }
                         is MetadataReceivedAlert -> {
-                            val h = alert.handle()
-                            if (h != null && h.isValid) {
-                                activeHandle = h
-                                configureTargetFile(h, fileIndex)
+                            val hex = alert.handle()?.infoHash()?.toHex()
+                            if (!hex.isNullOrBlank() && hex.length == 40) {
+                                activeInfoHashHex = hex.lowercase()
+                            }
+                            val owned = resolveOwnedHandle()
+                            if (owned != null && owned.isValid) {
+                                configureTargetFile(owned, fileIndex)
                             }
                             synchronized(pieceLock) {
                                 pieceLock.notifyAll()
@@ -196,10 +249,11 @@ class LocalTorrentStreamController(private val saveDir: File) {
 
         session.start(params)
         try {
-            session.startDht()
+            if (!session.isDhtRunning) {
+                session.startDht()
+            }
         } catch (_: Throwable) {
         }
-        sessionManager = session
 
         val enrichedMagnet = buildEnrichedMagnet(magnetOrUri, infoHash, sources)
         session.download(enrichedMagnet, saveDir, TorrentFlags.SEQUENTIAL_DOWNLOAD)
@@ -214,9 +268,19 @@ class LocalTorrentStreamController(private val saveDir: File) {
     }
 
     /**
-     * Lock-free, JNI-free snapshot safe to read directly from the Android UI thread.
+     * Lock-free, JNI-free snapshot safe to read directly from IPC / UI threads.
      */
     fun getCachedStatus(): Map<String, Any> = cachedTelemetry
+
+    private fun extractHexInfoHash(magnetOrUri: String, explicitHash: String?): String? {
+        val candidate = explicitHash?.trim()?.lowercase()
+        if (!candidate.isNullOrEmpty() && candidate.length == 40 && candidate.all { it in '0'..'9' || it in 'a'..'f' }) {
+            return candidate
+        }
+        val regex = Regex("btih:([0-9a-fA-F]{40})")
+        val match = regex.find(magnetOrUri)
+        return match?.groupValues?.getOrNull(1)?.lowercase()
+    }
 
     private fun startBackgroundTelemetryUpdater(requestedFileIdx: Int) {
         val thread = Thread {
@@ -240,7 +304,7 @@ class LocalTorrentStreamController(private val saveDir: File) {
     }
 
     private fun computeLiveStatus(requestedFileIdx: Int): Map<String, Any> {
-        val h = activeHandle
+        val h = resolveOwnedHandle()
         if (stopped || h == null || !h.isValid) {
             return emptyTelemetry()
         }
@@ -265,8 +329,8 @@ class LocalTorrentStreamController(private val saveDir: File) {
             }
             val contiguousBytes = contiguousHeaderPieces.toLong() * pieceLength.toLong()
             val tailReady = h.havePiece(lastPieceIdx)
-            val minHeaderBytes = min(selectedFileSize, max(pieceLength.toLong() * 2L, 1_048_576L))
-            ready = contiguousBytes >= minHeaderBytes && (tailReady || contiguousHeaderPieces >= 3)
+            val minHeaderBytes = min(selectedFileSize, max(pieceLength.toLong() * 2L, 768_000L))
+            ready = contiguousBytes >= minHeaderBytes && (tailReady || contiguousHeaderPieces >= 2)
         }
 
         return mapOf(
@@ -290,7 +354,7 @@ class LocalTorrentStreamController(private val saveDir: File) {
             if (numFiles <= 0) return
 
             var chosenIdx = -1
-            if (requestedIdx in 0 until numFiles) {
+            if (requestedIdx in 0 until numFiles && !fs.padFileAt(requestedIdx)) {
                 val candidateName = fs.fileName(requestedIdx).lowercase()
                 if (VIDEO_EXTENSIONS.any { candidateName.endsWith(it) } || numFiles == 1) {
                     chosenIdx = requestedIdx
@@ -299,6 +363,7 @@ class LocalTorrentStreamController(private val saveDir: File) {
             if (chosenIdx < 0) {
                 var bestSize = -1L
                 for (i in 0 until numFiles) {
+                    if (fs.padFileAt(i)) continue
                     val name = fs.fileName(i).lowercase()
                     val sz = fs.fileSize(i)
                     if (VIDEO_EXTENSIONS.any { name.endsWith(it) } && sz > bestSize) {
@@ -308,20 +373,37 @@ class LocalTorrentStreamController(private val saveDir: File) {
                 }
             }
             if (chosenIdx < 0) {
+                var bestSize = -1L
+                for (i in 0 until numFiles) {
+                    if (fs.padFileAt(i)) continue
+                    val sz = fs.fileSize(i)
+                    if (sz > bestSize) {
+                        bestSize = sz
+                        chosenIdx = i
+                    }
+                }
+            }
+            if (chosenIdx < 0) {
                 chosenIdx = requestedIdx.coerceIn(0, numFiles - 1)
             }
+
+            val pLen = ti.pieceLength()
+            val fOffset = fs.fileOffset(chosenIdx)
+            val fSize = fs.fileSize(chosenIdx)
+            if (pLen <= 0 || fSize <= 0L) return
+
+            // Exact piece bounds arithmetic (identical to LibreTorrent 4.1.1 TorrentDownloadImpl.getFilePieces)
+            val firstP = (fOffset / pLen.toLong()).toInt()
+            val lastP = ((fOffset + fSize - 1L) / pLen.toLong()).toInt()
 
             val priorities = Array(numFiles) { idx ->
                 if (idx == chosenIdx) Priority.DEFAULT else Priority.IGNORE
             }
             handle.prioritizeFiles(priorities)
+            handle.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD)
 
-            val pLen = fs.pieceLength()
-            val firstP = fs.pieceIndexAtFile(chosenIdx)
-            val lastP = fs.lastPieceIndexAtFile(chosenIdx)
-
-            selectedFileOffset = fs.fileOffset(chosenIdx)
-            selectedFileSize = fs.fileSize(chosenIdx)
+            selectedFileOffset = fOffset
+            selectedFileSize = fSize
             pieceLength = pLen
             firstPieceIdx = firstP
             lastPieceIdx = lastP
@@ -332,14 +414,17 @@ class LocalTorrentStreamController(private val saveDir: File) {
             val headEnd = min(lastP, firstP + 6)
             for (p in firstP..headEnd) {
                 handle.piecePriority(p, Priority.TOP_PRIORITY)
-                handle.setPieceDeadline(p, (p - firstP) * 140)
+                handle.setPieceDeadline(p, 1000 + (p - firstP) * 180)
             }
             val tailStart = max(firstP, lastP - 1)
             for (p in tailStart..lastP) {
                 handle.piecePriority(p, Priority.TOP_PRIORITY)
-                handle.setPieceDeadline(p, 220)
+                handle.setPieceDeadline(p, 1200)
             }
-            handle.setSequentialRange(firstP, lastP)
+            try {
+                handle.setSequentialRange(firstP, lastP)
+            } catch (_: Throwable) {
+            }
         }
     }
 
@@ -381,7 +466,7 @@ class LocalTorrentStreamController(private val saveDir: File) {
             if (selectedFileIdx >= 0 && selectedFile != null && pieceLength > 0) {
                 return true
             }
-            val h = activeHandle
+            val h = resolveOwnedHandle()
             if (h != null && h.isValid) {
                 try {
                     if (h.status().hasMetadata()) {
@@ -406,14 +491,14 @@ class LocalTorrentStreamController(private val saveDir: File) {
 
     private fun waitForPiece(pieceIndex: Int, timeoutMs: Long): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
-        val h = activeHandle ?: return false
+        val initialHandle = resolveOwnedHandle() ?: return false
 
         try {
             val maxLookahead = min(lastPieceIdx, pieceIndex + 5)
             for (p in pieceIndex..maxLookahead) {
-                if (!h.havePiece(p)) {
-                    h.piecePriority(p, Priority.TOP_PRIORITY)
-                    h.setPieceDeadline(p, (p - pieceIndex) * 120)
+                if (!initialHandle.havePiece(p)) {
+                    initialHandle.piecePriority(p, Priority.TOP_PRIORITY)
+                    initialHandle.setPieceDeadline(p, 800 + (p - pieceIndex) * 150)
                 }
             }
         } catch (_: Throwable) {
@@ -421,7 +506,7 @@ class LocalTorrentStreamController(private val saveDir: File) {
 
         while (!stopped && System.currentTimeMillis() < deadline) {
             try {
-                if (!h.isValid) return false
+                val h = resolveOwnedHandle() ?: return false
                 if (h.havePiece(pieceIndex)) return true
             } catch (_: Throwable) {
                 return false
@@ -437,7 +522,8 @@ class LocalTorrentStreamController(private val saveDir: File) {
             if (interrupted) return false
         }
         return try {
-            h.isValid && h.havePiece(pieceIndex)
+            val h = resolveOwnedHandle()
+            h != null && h.isValid && h.havePiece(pieceIndex)
         } catch (_: Throwable) {
             false
         }
@@ -499,13 +585,13 @@ class LocalTorrentStreamController(private val saveDir: File) {
         httpServer = null
 
         try {
-            val h = activeHandle
+            val h = resolveOwnedHandle()
             if (h != null && h.isValid) {
                 sessionManager?.remove(h)
             }
         } catch (_: Throwable) {
         }
-        activeHandle = null
+        activeInfoHashHex = null
         selectedFileIdx = -1
         selectedFile = null
         selectedFileSize = 0L
@@ -661,7 +747,7 @@ class LocalTorrentStreamController(private val saveDir: File) {
             val reader = ensureRaf()
             if (reader.length() < currentFilePos + maxRead) {
                 try {
-                    activeHandle?.flushCache()
+                    resolveOwnedHandle()?.flushCache()
                 } catch (_: Throwable) {
                 }
                 Thread.sleep(50)
