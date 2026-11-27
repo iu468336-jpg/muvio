@@ -21,27 +21,6 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Configure Gradle Google Maven Central Mirror (prevents Azure IP 429)
-        run: |
-          mkdir -p ~/.gradle
-          cat << 'EOF' > ~/.gradle/init.gradle
-          beforeSettings { settings ->
-            settings.pluginManagement.repositories {
-              maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
-            }
-          }
-          allprojects {
-            buildscript {
-              repositories {
-                maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
-              }
-            }
-            repositories {
-              maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }
-            }
-          }
-          EOF
-
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
@@ -62,6 +41,15 @@ jobs:
           fi
 
       - run: flutter pub get
+      - name: Patch Flutter gradle plugin repositories for Maven Central 429 resilience
+        run: |
+          for f in "$FLUTTER_ROOT/packages/flutter_tools/gradle/settings.gradle.kts" \
+                   "$FLUTTER_ROOT/packages/flutter_tools/gradle/build.gradle.kts"; do
+            if [ -f "$f" ]; then
+              sed -i 's|mavenCentral()|maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }\n        mavenCentral()|g' "$f"
+              sed -i 's|gradlePluginPortal()|maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }\n        gradlePluginPortal()|g' "$f"
+            fi
+          done
       - run: flutter gen-l10n
       - run: flutter analyze
       - run: flutter test --concurrency=1
