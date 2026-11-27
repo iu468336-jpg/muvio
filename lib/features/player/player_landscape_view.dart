@@ -19,15 +19,10 @@ class _LandscapeFullscreenView extends StatelessWidget {
       children: [
         Transform.scale(
           scale: state._zoomScale,
-          child: state._videoController != null
-              ? Video(
-                  controller: state._videoController!,
-                  controls: null,
-                )
-              : MuvioImage(
-                  imageUrl: media.backdrop ?? media.poster,
-                  memCacheWidth: 1400,
-                ),
+          child: state._buildVideoSurface(
+            media,
+            fallbackCacheWidth: 1400,
+          ),
         ),
         if (state._controlsVisible) ...[
           const DecoratedBox(
@@ -307,7 +302,7 @@ class _LandscapeFullscreenView extends StatelessWidget {
                         ? null
                         : (v) {
                             final d = Duration(seconds: v.round());
-                            state._player?.seek(d);
+                            state._playerBridge.seek(d);
                             // ignore: invalid_use_of_protected_member
                             state.setState(() => state._position = d);
                           },
@@ -332,13 +327,7 @@ class _LandscapeFullscreenView extends StatelessWidget {
                           children: [
                             IconButton(
                               visualDensity: VisualDensity.compact,
-                              onPressed: () {
-                                // ignore: invalid_use_of_protected_member
-                                state.setState(
-                                  () => state._subtitlesEnabled =
-                                      !state._subtitlesEnabled,
-                                );
-                              },
+                              onPressed: state._toggleSubtitles,
                               icon: Icon(
                                 Icons.closed_caption_off_outlined,
                                 color: state._subtitlesEnabled
@@ -347,15 +336,7 @@ class _LandscapeFullscreenView extends StatelessWidget {
                               ),
                             ),
                             TextButton.icon(
-                              onPressed: () {
-                                // ignore: invalid_use_of_protected_member
-                                state.setState(
-                                  () => state._selectedAudioLabel =
-                                      state._selectedAudioLabel == 'English'
-                                          ? 'Français'
-                                          : 'English',
-                                );
-                              },
+                              onPressed: state._cycleAudioTrack,
                               icon: const Icon(
                                 LucideIcons.volume2,
                                 size: 15,

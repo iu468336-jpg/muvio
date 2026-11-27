@@ -15,12 +15,14 @@
         android:label="Muvio"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
+        android:largeHeap="true"
         android:usesCleartextTraffic="true"
         android:enableOnBackInvokedCallback="true">
 
+        <!-- Disable Impeller on Android to prevent Vulkan/Mali/GLES crashes on 32-bit armeabi-v7a phones and ensure zero-flicker SurfaceTexture video composition -->
         <meta-data
             android:name="io.flutter.embedding.android.EnableImpeller"
-            android:value="true" />
+            android:value="false" />
 
         <activity
             android:name=".MainActivity"

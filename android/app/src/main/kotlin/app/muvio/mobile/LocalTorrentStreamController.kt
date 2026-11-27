@@ -4,6 +4,8 @@ import fi.iki.elonen.NanoHTTPD
 import org.libtorrent4j.AlertListener
 import org.libtorrent4j.Priority
 import org.libtorrent4j.SessionManager
+import org.libtorrent4j.SessionParams
+import org.libtorrent4j.SettingsPack
 import org.libtorrent4j.TorrentFlags
 import org.libtorrent4j.TorrentHandle
 import org.libtorrent4j.TorrentInfo
@@ -12,6 +14,7 @@ import org.libtorrent4j.alerts.Alert
 import org.libtorrent4j.alerts.AlertType
 import org.libtorrent4j.alerts.MetadataReceivedAlert
 import org.libtorrent4j.alerts.PieceFinishedAlert
+import org.libtorrent4j.swig.settings_pack
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -21,17 +24,18 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Piece-accurate sequential torrent streaming engine powered by `libtorrent4j` + `NanoHTTPD`.
+ * 32-bit `armeabi-v7a` safe, piece-accurate sequential torrent streaming engine
+ * powered by `libtorrent4j` (`setPosixDiskIO()`) + `NanoHTTPD`.
  *
- * Key guarantees for reliable `media_kit` (`libmpv`) playback on mobile:
- * 1. Injects fast public UDP/HTTP trackers + Stremio `sources` trackers + DHT/LSD bootstrap.
- * 2. Selects the exact target video file (`fileIdx` or largest video extension) and sets
- *    `Priority.IGNORE` on all other files so season packs never waste bandwidth.
- * 3. Prioritizes BOTH the initial header pieces AND the final tail pieces (`moov` / MKV `Cues`)
- *    with `Priority.TOP_PRIORITY` + urgent `setPieceDeadline`.
- * 4. Serves byte-accurate HTTP `206 Partial Content` streams via `TorrentPieceInputStream`
- *    which verifies `TorrentHandle.havePiece(pieceIdx)` before reading from `RandomAccessFile`,
- *    preventing `mpv` from ever reading sparse all-zero unwritten disk blocks!
+ * Critical guarantees for mobile stability:
+ * 1. Calls `SessionParams(settings).apply { setPosixDiskIO() }` so `libtorrent` NEVER
+ *    memory-maps (`mmap`) multi-gigabyte video torrents into a 32-bit virtual address space.
+ * 2. Applies bounded mobile `SettingsPack` limits (`connectionsLimit`, `maxPeerlistSize`,
+ *    `maxQueuedDiskBytes`, `aio_threads`) to prevent RAM/socket exhaustion on budget phones.
+ * 3. Updates telemetry on a background daemon thread so `getCachedStatus()` is 100%
+ *    lock-free and JNI-free when polled from the Android UI thread.
+ * 4. Serves byte-accurate HTTP `206 Partial Content` streams via `TorrentPieceInputStream`,
+ *    verifying `TorrentHandle.havePiece(pieceIdx)` before reading from `RandomAccessFile`.
  */
 class LocalTorrentStreamController(private val saveDir: File) {
 
@@ -54,10 +58,25 @@ class LocalTorrentStreamController(private val saveDir: File) {
         private val VIDEO_EXTENSIONS = listOf(
             ".mkv", ".mp4", ".webm", ".avi", ".mov", ".m4v", ".ts", ".m2ts"
         )
+
+        private fun emptyTelemetry(): Map<String, Any> = mapOf(
+            "hasMetadata" to false,
+            "readyToPlay" to false,
+            "peers" to 0,
+            "seeds" to 0,
+            "downloadSpeed" to 0,
+            "progress" to 0.0,
+            "bufferedBytes" to 0L,
+            "fileSize" to 0L
+        )
     }
 
     private var sessionManager: SessionManager? = null
     private var httpServer: ProgressiveHttpServer? = null
+    private var telemetryUpdaterThread: Thread? = null
+
+    @Volatile
+    private var cachedTelemetry: Map<String, Any> = emptyTelemetry()
 
     @Volatile
     private var activeHandle: TorrentHandle? = null
@@ -87,6 +106,7 @@ class LocalTorrentStreamController(private val saveDir: File) {
     private var stopped: Boolean = false
 
     private val pieceLock = Object()
+    private val configLock = Object()
 
     fun startSequentialStream(
         magnetOrUri: String,
@@ -94,11 +114,38 @@ class LocalTorrentStreamController(private val saveDir: File) {
         fileIndex: Int,
         sources: List<String>
     ): String {
-        stop()
+        stopBlocking()
         stopped = false
+        cachedTelemetry = emptyTelemetry()
         cleanOldCacheFiles()
 
-        val session = SessionManager()
+        val settings = SettingsPack()
+            .activeDownloads(2)
+            .activeSeeds(1)
+            .activeLimit(4)
+            .connectionsLimit(55)
+            .maxPeerlistSize(250)
+            .maxQueuedDiskBytes(4 * 1024 * 1024)
+            .sendBufferWatermark(1024 * 1024)
+            .alertQueueSize(400)
+            .stopTrackerTimeout(1)
+            .seedingOutgoingConnections(false)
+            .setBoolean(settings_pack.bool_types.enable_dht.swigValue(), true)
+            .setBoolean(settings_pack.bool_types.enable_lsd.swigValue(), true)
+            .setBoolean(settings_pack.bool_types.announce_to_all_trackers.swigValue(), true)
+            .setBoolean(settings_pack.bool_types.announce_to_all_tiers.swigValue(), true)
+            .setBoolean(settings_pack.bool_types.prioritize_partial_pieces.swigValue(), true)
+            .setBoolean(settings_pack.bool_types.validate_https_trackers.swigValue(), false)
+            .setInteger(settings_pack.int_types.aio_threads.swigValue(), 2)
+            .setInteger(settings_pack.int_types.hashing_threads.swigValue(), 1)
+            .setInteger(settings_pack.int_types.checking_mem_usage.swigValue(), 256)
+            .setInteger(settings_pack.int_types.file_pool_size.swigValue(), 8)
+
+        val params = SessionParams(settings)
+        // CRITICAL for 32-bit armeabi-v7a: never mmap large video files into 32-bit VM space!
+        params.setPosixDiskIO()
+
+        val session = SessionManager(false)
         session.addListener(object : AlertListener {
             override fun types(): IntArray = intArrayOf(
                 AlertType.ADD_TORRENT.swig(),
@@ -107,43 +154,47 @@ class LocalTorrentStreamController(private val saveDir: File) {
             )
 
             override fun alert(alert: Alert<*>) {
-                when (alert) {
-                    is AddTorrentAlert -> {
-                        val h = alert.handle()
-                        if (h.isValid) {
-                            activeHandle = h
-                            h.resume()
-                            try {
-                                h.forceReannounce()
-                                h.forceDHTAnnounce()
-                                h.forceLSDAnnounce()
-                            } catch (_: Throwable) {
+                if (stopped) return
+                try {
+                    when (alert) {
+                        is AddTorrentAlert -> {
+                            val h = alert.handle()
+                            if (h != null && h.isValid) {
+                                activeHandle = h
+                                h.resume()
+                                try {
+                                    h.forceReannounce()
+                                    h.forceDHTAnnounce()
+                                    h.forceLSDAnnounce()
+                                } catch (_: Throwable) {
+                                }
+                                if (h.status().hasMetadata()) {
+                                    configureTargetFile(h, fileIndex)
+                                }
                             }
-                            if (h.status().hasMetadata()) {
+                        }
+                        is MetadataReceivedAlert -> {
+                            val h = alert.handle()
+                            if (h != null && h.isValid) {
+                                activeHandle = h
                                 configureTargetFile(h, fileIndex)
                             }
+                            synchronized(pieceLock) {
+                                pieceLock.notifyAll()
+                            }
+                        }
+                        is PieceFinishedAlert -> {
+                            synchronized(pieceLock) {
+                                pieceLock.notifyAll()
+                            }
                         }
                     }
-                    is MetadataReceivedAlert -> {
-                        val h = alert.handle()
-                        if (h.isValid) {
-                            activeHandle = h
-                            configureTargetFile(h, fileIndex)
-                        }
-                        synchronized(pieceLock) {
-                            pieceLock.notifyAll()
-                        }
-                    }
-                    is PieceFinishedAlert -> {
-                        synchronized(pieceLock) {
-                            pieceLock.notifyAll()
-                        }
-                    }
+                } catch (_: Throwable) {
                 }
             }
         })
 
-        session.start()
+        session.start(params)
         try {
             session.startDht()
         } catch (_: Throwable) {
@@ -157,31 +208,54 @@ class LocalTorrentStreamController(private val saveDir: File) {
         server.start(60_000, false)
         httpServer = server
 
+        startBackgroundTelemetryUpdater(fileIndex)
+
         return "http://127.0.0.1:${server.listeningPort}/stream"
     }
 
-    fun getStreamStatus(): Map<String, Any> {
+    /**
+     * Lock-free, JNI-free snapshot safe to read directly from the Android UI thread.
+     */
+    fun getCachedStatus(): Map<String, Any> = cachedTelemetry
+
+    private fun startBackgroundTelemetryUpdater(requestedFileIdx: Int) {
+        val thread = Thread {
+            while (!stopped) {
+                try {
+                    cachedTelemetry = computeLiveStatus(requestedFileIdx)
+                } catch (_: Throwable) {
+                }
+                try {
+                    Thread.sleep(650)
+                } catch (_: InterruptedException) {
+                    return@Thread
+                }
+            }
+        }.apply {
+            name = "MuvioTorrentTelemetry"
+            isDaemon = true
+            start()
+        }
+        telemetryUpdaterThread = thread
+    }
+
+    private fun computeLiveStatus(requestedFileIdx: Int): Map<String, Any> {
         val h = activeHandle
-        if (h == null || !h.isValid) {
-            return mapOf(
-                "hasMetadata" to false,
-                "readyToPlay" to false,
-                "peers" to 0,
-                "seeds" to 0,
-                "downloadSpeed" to 0,
-                "progress" to 0.0,
-                "bufferedBytes" to 0L,
-                "fileSize" to 0L
-            )
+        if (stopped || h == null || !h.isValid) {
+            return emptyTelemetry()
         }
 
         val st = h.status()
+        if (st.hasMetadata() && selectedFileIdx < 0) {
+            configureTargetFile(h, requestedFileIdx)
+        }
+
         val hasMeta = st.hasMetadata() && selectedFileIdx >= 0 && pieceLength > 0
         var contiguousHeaderPieces = 0
         var ready = false
 
         if (hasMeta) {
-            val checkCount = min(lastPieceIdx - firstPieceIdx + 1, 12)
+            val checkCount = min(lastPieceIdx - firstPieceIdx + 1, 10)
             for (i in 0 until checkCount) {
                 if (h.havePiece(firstPieceIdx + i)) {
                     contiguousHeaderPieces++
@@ -191,7 +265,7 @@ class LocalTorrentStreamController(private val saveDir: File) {
             }
             val contiguousBytes = contiguousHeaderPieces.toLong() * pieceLength.toLong()
             val tailReady = h.havePiece(lastPieceIdx)
-            val minHeaderBytes = min(selectedFileSize, max(pieceLength.toLong() * 2L, 1_572_864L))
+            val minHeaderBytes = min(selectedFileSize, max(pieceLength.toLong() * 2L, 1_048_576L))
             ready = contiguousBytes >= minHeaderBytes && (tailReady || contiguousHeaderPieces >= 3)
         }
 
@@ -208,63 +282,65 @@ class LocalTorrentStreamController(private val saveDir: File) {
     }
 
     private fun configureTargetFile(handle: TorrentHandle, requestedIdx: Int) {
-        if (selectedFileIdx >= 0) return
-        val ti: TorrentInfo = handle.torrentFile() ?: return
-        val fs = ti.files()
-        val numFiles = fs.numFiles()
-        if (numFiles <= 0) return
+        synchronized(configLock) {
+            if (selectedFileIdx >= 0 || stopped || !handle.isValid) return
+            val ti: TorrentInfo = handle.torrentFile() ?: return
+            val fs = ti.files()
+            val numFiles = fs.numFiles()
+            if (numFiles <= 0) return
 
-        var chosenIdx = -1
-        if (requestedIdx in 0 until numFiles) {
-            val candidateName = fs.fileName(requestedIdx).lowercase()
-            if (VIDEO_EXTENSIONS.any { candidateName.endsWith(it) } || numFiles == 1) {
-                chosenIdx = requestedIdx
-            }
-        }
-        if (chosenIdx < 0) {
-            var bestSize = -1L
-            for (i in 0 until numFiles) {
-                val name = fs.fileName(i).lowercase()
-                val sz = fs.fileSize(i)
-                if (VIDEO_EXTENSIONS.any { name.endsWith(it) } && sz > bestSize) {
-                    bestSize = sz
-                    chosenIdx = i
+            var chosenIdx = -1
+            if (requestedIdx in 0 until numFiles) {
+                val candidateName = fs.fileName(requestedIdx).lowercase()
+                if (VIDEO_EXTENSIONS.any { candidateName.endsWith(it) } || numFiles == 1) {
+                    chosenIdx = requestedIdx
                 }
             }
-        }
-        if (chosenIdx < 0) {
-            chosenIdx = requestedIdx.coerceIn(0, numFiles - 1)
-        }
+            if (chosenIdx < 0) {
+                var bestSize = -1L
+                for (i in 0 until numFiles) {
+                    val name = fs.fileName(i).lowercase()
+                    val sz = fs.fileSize(i)
+                    if (VIDEO_EXTENSIONS.any { name.endsWith(it) } && sz > bestSize) {
+                        bestSize = sz
+                        chosenIdx = i
+                    }
+                }
+            }
+            if (chosenIdx < 0) {
+                chosenIdx = requestedIdx.coerceIn(0, numFiles - 1)
+            }
 
-        val priorities = Array(numFiles) { idx ->
-            if (idx == chosenIdx) Priority.DEFAULT else Priority.IGNORE
-        }
-        handle.prioritizeFiles(priorities)
+            val priorities = Array(numFiles) { idx ->
+                if (idx == chosenIdx) Priority.DEFAULT else Priority.IGNORE
+            }
+            handle.prioritizeFiles(priorities)
 
-        val pLen = fs.pieceLength()
-        val firstP = fs.pieceIndexAtFile(chosenIdx)
-        val lastP = fs.lastPieceIndexAtFile(chosenIdx)
+            val pLen = fs.pieceLength()
+            val firstP = fs.pieceIndexAtFile(chosenIdx)
+            val lastP = fs.lastPieceIndexAtFile(chosenIdx)
 
-        selectedFileOffset = fs.fileOffset(chosenIdx)
-        selectedFileSize = fs.fileSize(chosenIdx)
-        pieceLength = pLen
-        firstPieceIdx = firstP
-        lastPieceIdx = lastP
-        selectedFile = File(saveDir, fs.filePath(chosenIdx))
-        selectedFileIdx = chosenIdx
+            selectedFileOffset = fs.fileOffset(chosenIdx)
+            selectedFileSize = fs.fileSize(chosenIdx)
+            pieceLength = pLen
+            firstPieceIdx = firstP
+            lastPieceIdx = lastP
+            selectedFile = File(saveDir, fs.filePath(chosenIdx))
+            selectedFileIdx = chosenIdx
 
-        // Prioritize header pieces (EBML / ftyp / moov) + final tail pieces (Cues / moov at tail)
-        val headEnd = min(lastP, firstP + 6)
-        for (p in firstP..headEnd) {
-            handle.piecePriority(p, Priority.TOP_PRIORITY)
-            handle.setPieceDeadline(p, (p - firstP) * 150)
+            // Prioritize header pieces (EBML / ftyp / moov) + final tail pieces (Cues / moov at tail)
+            val headEnd = min(lastP, firstP + 6)
+            for (p in firstP..headEnd) {
+                handle.piecePriority(p, Priority.TOP_PRIORITY)
+                handle.setPieceDeadline(p, (p - firstP) * 140)
+            }
+            val tailStart = max(firstP, lastP - 1)
+            for (p in tailStart..lastP) {
+                handle.piecePriority(p, Priority.TOP_PRIORITY)
+                handle.setPieceDeadline(p, 220)
+            }
+            handle.setSequentialRange(firstP, lastP)
         }
-        val tailStart = max(firstP, lastP - 1)
-        for (p in tailStart..lastP) {
-            handle.piecePriority(p, Priority.TOP_PRIORITY)
-            handle.setPieceDeadline(p, 250)
-        }
-        handle.setSequentialRange(firstP, lastP)
     }
 
     private fun buildEnrichedMagnet(
@@ -306,9 +382,14 @@ class LocalTorrentStreamController(private val saveDir: File) {
                 return true
             }
             val h = activeHandle
-            if (h != null && h.isValid && h.status().hasMetadata()) {
-                configureTargetFile(h, 0)
-                if (selectedFileIdx >= 0) return true
+            if (h != null && h.isValid) {
+                try {
+                    if (h.status().hasMetadata()) {
+                        configureTargetFile(h, 0)
+                        if (selectedFileIdx >= 0) return true
+                    }
+                } catch (_: Throwable) {
+                }
             }
             var interrupted = false
             synchronized(pieceLock) {
@@ -327,7 +408,6 @@ class LocalTorrentStreamController(private val saveDir: File) {
         val deadline = System.currentTimeMillis() + timeoutMs
         val h = activeHandle ?: return false
 
-        // Boost priority of this exact piece and the next 5 lookahead pieces
         try {
             val maxLookahead = min(lastPieceIdx, pieceIndex + 5)
             for (p in pieceIndex..maxLookahead) {
@@ -340,17 +420,27 @@ class LocalTorrentStreamController(private val saveDir: File) {
         }
 
         while (!stopped && System.currentTimeMillis() < deadline) {
-            if (!h.isValid) return false
-            if (h.havePiece(pieceIndex)) return true
+            try {
+                if (!h.isValid) return false
+                if (h.havePiece(pieceIndex)) return true
+            } catch (_: Throwable) {
+                return false
+            }
+            var interrupted = false
             synchronized(pieceLock) {
                 try {
-                    pieceLock.wait(200)
+                    pieceLock.wait(180)
                 } catch (_: InterruptedException) {
-                    return false
+                    interrupted = true
                 }
             }
+            if (interrupted) return false
         }
-        return h.isValid && h.havePiece(pieceIndex)
+        return try {
+            h.isValid && h.havePiece(pieceIndex)
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     private fun detectMimeType(fileName: String): String {
@@ -375,11 +465,33 @@ class LocalTorrentStreamController(private val saveDir: File) {
         }
     }
 
-    fun stop() {
+    fun stopAsync() {
         stopped = true
+        cachedTelemetry = emptyTelemetry()
         synchronized(pieceLock) {
             pieceLock.notifyAll()
         }
+        Thread {
+            stopBlocking()
+        }.apply {
+            name = "MuvioTorrentStop"
+            isDaemon = true
+            start()
+        }
+    }
+
+    fun stopBlocking() {
+        stopped = true
+        cachedTelemetry = emptyTelemetry()
+        synchronized(pieceLock) {
+            pieceLock.notifyAll()
+        }
+        try {
+            telemetryUpdaterThread?.interrupt()
+        } catch (_: Throwable) {
+        }
+        telemetryUpdaterThread = null
+
         try {
             httpServer?.stop()
         } catch (_: Throwable) {
@@ -401,12 +513,10 @@ class LocalTorrentStreamController(private val saveDir: File) {
         val oldSession = sessionManager
         sessionManager = null
         if (oldSession != null) {
-            Thread {
-                try {
-                    oldSession.stop()
-                } catch (_: Throwable) {
-                }
-            }.apply { isDaemon = true }.start()
+            try {
+                oldSession.stop()
+            } catch (_: Throwable) {
+            }
         }
     }
 
@@ -426,6 +536,13 @@ class LocalTorrentStreamController(private val saveDir: File) {
                 "No video file found in torrent"
             )
             val totalLen = selectedFileSize
+            if (totalLen <= 0L) {
+                return newFixedLengthResponse(
+                    Response.Status.NOT_FOUND,
+                    MIME_PLAINTEXT,
+                    "Empty torrent video file"
+                )
+            }
             val mime = detectMimeType(targetFile.name)
 
             if (httpSession.method == Method.HEAD) {
@@ -537,15 +654,17 @@ class LocalTorrentStreamController(private val saveDir: File) {
                 throw IOException("Timed out waiting for torrent piece $pieceIdx")
             }
 
-            // Flush disk cache on boundary if file length hasn't grown yet
             val nextPieceStartOffset = (pieceIdx.toLong() + 1L) * pLen.toLong()
             val bytesLeftInPiece = nextPieceStartOffset - absTorrentOffset
             val maxRead = min(len.toLong(), min(remaining, bytesLeftInPiece)).toInt()
 
             val reader = ensureRaf()
             if (reader.length() < currentFilePos + maxRead) {
-                activeHandle?.flushCache()
-                Thread.sleep(60)
+                try {
+                    activeHandle?.flushCache()
+                } catch (_: Throwable) {
+                }
+                Thread.sleep(50)
             }
             reader.seek(currentFilePos)
             val actualRead = reader.read(b, off, maxRead)

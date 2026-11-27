@@ -5,6 +5,7 @@ import 'package:muvio/core/storage/app_database.dart';
 import 'package:muvio/data/models/addon_models.dart';
 import 'package:muvio/data/models/app_settings.dart';
 import 'package:muvio/data/models/media_models.dart';
+import 'package:muvio/data/providers/native_video_player_bridge.dart';
 import 'package:muvio/data/providers/stremio_addon_client.dart';
 import 'package:muvio/data/providers/torrent_engine_bridge.dart';
 import 'package:muvio/data/repositories/addon_repository.dart';
@@ -32,6 +33,11 @@ MediaProvider stremioClient(Ref ref) {
 TorrentEngineBridge torrentEngineBridge(Ref ref) {
   return const TorrentEngineBridge();
 }
+
+final nativeVideoPlayerBridgeProvider =
+    Provider<NativeVideoPlayerBridge>((ref) {
+  return const NativeVideoPlayerBridge();
+});
 
 @Riverpod(keepAlive: true)
 AddonRepository addonRepository(Ref ref) {

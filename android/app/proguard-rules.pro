@@ -18,6 +18,10 @@
 -keep class fi.iki.elonen.** { *; }
 -dontwarn fi.iki.elonen.**
 
-# Keep media_kit / libmpv native bindings
--keep class com.alexmercerind.** { *; }
--dontwarn com.alexmercerind.**
+# Keep AndroidX Media3 + Jellyfin FFmpeg decoder JNI bindings
+-keep class androidx.media3.** { *; }
+-dontwarn androidx.media3.**
+-keepclasseswithmembernames class * {
+    native <methods>;
+}
+-keep class app.muvio.mobile.** { *; }

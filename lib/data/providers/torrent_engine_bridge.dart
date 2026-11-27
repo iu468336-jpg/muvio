@@ -52,7 +52,7 @@ class TorrentEngineBridge {
       MethodChannel('app.muvio.mobile/pip');
 
   /// Starts sequential download of header & tail pieces and returns a local
-  /// `http://127.0.0.1:<port>/stream` URL playable by `media_kit`.
+  /// `http://127.0.0.1:<port>/stream` URL playable by AndroidX Media3 (`ExoPlayer`).
   Future<Result<String>> resolveMagnetOrInfoHash({
     required String magnetOrUrl,
     String? infoHash,

@@ -69,6 +69,15 @@ android {
 }
 
 dependencies {
+    def media3Version = "1.6.1"
+    implementation("androidx.media3:media3-exoplayer:${media3Version}")
+    implementation("androidx.media3:media3-exoplayer-hls:${media3Version}")
+    implementation("androidx.media3:media3-exoplayer-dash:${media3Version}")
+    implementation("androidx.media3:media3-datasource:${media3Version}")
+    implementation("androidx.media3:media3-extractor:${media3Version}")
+    implementation("androidx.media3:media3-common:${media3Version}")
+    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.6.1+1")
+
     implementation("org.libtorrent4j:libtorrent4j:2.1.0-31")
     implementation("org.libtorrent4j:libtorrent4j-android-arm64:2.1.0-31")
     implementation("org.libtorrent4j:libtorrent4j-android-arm:2.1.0-31")

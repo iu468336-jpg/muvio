@@ -24,15 +24,10 @@ class _PortraitPlayerView extends StatelessWidget {
               children: [
                 Transform.scale(
                   scale: state._zoomScale,
-                  child: state._videoController != null
-                      ? Video(
-                          controller: state._videoController!,
-                          controls: null,
-                        )
-                      : MuvioImage(
-                          imageUrl: media.backdrop ?? media.poster,
-                          memCacheWidth: 1080,
-                        ),
+                  child: state._buildVideoSurface(
+                    media,
+                    fallbackCacheWidth: 1080,
+                  ),
                 ),
                 const DecoratedBox(
                   decoration: BoxDecoration(
@@ -192,7 +187,7 @@ class _PortraitPlayerView extends StatelessWidget {
                               .toDouble(),
                           onChanged: (v) {
                             final d = Duration(seconds: v.round());
-                            state._player?.seek(d);
+                            state._playerBridge.seek(d);
                             // ignore: invalid_use_of_protected_member
                             state.setState(() => state._position = d);
                           },
@@ -229,18 +224,12 @@ class _PortraitPlayerView extends StatelessWidget {
                           _ControlPillButton(
                             icon: Icons.subtitles_outlined,
                             active: state._subtitlesEnabled,
-                            onTap: () {
-                              // ignore: invalid_use_of_protected_member
-                              state.setState(
-                                () => state._subtitlesEnabled =
-                                    !state._subtitlesEnabled,
-                              );
-                            },
+                            onTap: state._toggleSubtitles,
                           ),
                           const SizedBox(width: 6),
                           _ControlPillButton(
                             icon: LucideIcons.volume2,
-                            onTap: () {},
+                            onTap: state._cycleAudioTrack,
                           ),
                           const SizedBox(width: 6),
                           _QualityChip(

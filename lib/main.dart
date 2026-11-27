@@ -1,18 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:media_kit/media_kit.dart';
 import 'package:muvio/app.dart';
 import 'package:muvio/core/theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  MediaKit.ensureInitialized();
   AppTheme.configureFonts();
 
-  // Cap decoded image LRU memory cache to 100 MB per section 6 performance spec
-  PaintingBinding.instance.imageCache.maximumSizeBytes = 100 * 1024 * 1024;
-  PaintingBinding.instance.imageCache.maximumSize = 250;
+  // Cap decoded image LRU memory cache to 64 MB for optimal 32-bit mobile stability
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 64 * 1024 * 1024;
+  PaintingBinding.instance.imageCache.maximumSize = 180;
 
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   SystemChrome.setSystemUIOverlayStyle(
