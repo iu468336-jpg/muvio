@@ -500,13 +500,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final fallbackTitle = _activeStream?.title.split('·').first.trim() ?? '';
     final media = _media ??
         MediaItem(
           id: widget.mediaId,
           type: widget.mediaType,
-          title: _activeStream?.title.split('·').first.trim().isNotEmpty == true
-              ? _activeStream!.title.split('·').first.trim()
-              : 'Chargement…',
+          title: fallbackTitle.isNotEmpty ? fallbackTitle : 'Chargement…',
           poster: '',
         );
 
