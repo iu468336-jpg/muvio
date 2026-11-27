@@ -4,8 +4,8 @@ import android.net.Uri
 import com.nuvio.engine.NuvioEngine
 import com.nuvio.engine.NuvioEngineConfig
 import com.nuvio.engine.NuvioEngineException
-import com.nuvio.engine.NuvioLogLevel
 import com.nuvio.engine.NuvioTorrentProfile
+import com.nuvio.engine.NuvioUploadMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,7 +28,7 @@ import java.util.Locale
  * 1. Keeps the `NuvioEngine` DHT + UDP/TCP swarm session alive across plays (`warmUp()` on service
  *    start, `stopStream()` on playback exit instead of tearing down DHT!).
  * 2. Returns the local HTTP Range URL (`http://127.0.0.1:<port>/streams/<id>`) immediately once
- *    torrent metadata resolves (`preloadBytes = 0L`) so Media3 `ExoPlayer` opens right away and
+ *    torrent metadata resolves (`0L` preload) so Media3 `ExoPlayer` opens right away and
  *    drives C++ sliding-window demand piece scheduling directly via HTTP `Range` requests.
  * 3. Caps magnet URIs cleanly under NuvioEngine's 16 KiB limit while injecting high-speed UDP/WSS
  *    public trackers for instant peer discovery.
@@ -109,21 +109,14 @@ class LocalTorrentStreamController(private val cacheRoot: File) {
         val diskCacheDir = File(cacheRoot, "nuvio_cache").apply { mkdirs() }
 
         val config = NuvioEngineConfig(
-            dataDir = dataDir.absolutePath,
-            cacheDir = diskCacheDir.absolutePath,
-            httpBindAddress = "127.0.0.1",
-            httpPort = 0,
-            enableDht = true,
-            enableLsd = true,
-            enableUpnp = true,
-            enableNatPmp = true,
-            memoryCacheMaxBytes = 48L * 1024L * 1024L,      // 48 MiB RAM sliding buffer (32-bit ARM safe)
-            diskCacheMaxBytes = 1536L * 1024L * 1024L,      // 1.5 GiB persistent disk piece cache
-            maxDownloadRateBytesPerSec = 0L,
-            maxUploadRateBytesPerSec = 256L * 1024L,
+            dataDirectory = dataDir,
+            cacheDirectory = diskCacheDir,
+            memoryCacheCapacityBytes = 48L * 1024L * 1024L,      // 48 MiB RAM sliding buffer (32-bit ARM safe)
+            diskCacheCapacityBytes = 1536L * 1024L * 1024L,      // 1.5 GiB persistent disk piece cache
             torrentProfile = NuvioTorrentProfile.Fast,
-            userAgent = "NuvioEngine/0.1.6 Muvio/1.0.5",
-            logLevel = NuvioLogLevel.Warn
+            listenPort = 0,
+            uploadMode = NuvioUploadMode.Limited,
+            uploadLimitBytesPerSecond = 256L * 1024L
         )
 
         val created = NuvioEngine.create(config, Dispatchers.IO)
@@ -150,7 +143,7 @@ class LocalTorrentStreamController(private val cacheRoot: File) {
             try {
                 nuvio.addMagnet(magnet)
             } catch (e: NuvioEngineException) {
-                throw IllegalStateException("Erreur P2P Nuvio (${e.code}): ${e.message}", e)
+                throw IllegalStateException("Erreur P2P Nuvio (${e.status}): ${e.message}", e)
             }
         }
 
@@ -159,18 +152,18 @@ class LocalTorrentStreamController(private val cacheRoot: File) {
 
         val prepared = try {
             nuvio.prepareStream(
-                torrentId = torrentId,
-                fileIndex = normalizedFileIndex,
-                filenameHint = normalizedHint,
-                preloadBytes = 0L
+                torrentId,
+                normalizedFileIndex,
+                normalizedHint,
+                0L
             )
         } catch (_: Throwable) {
-            // Fallback without fileIndex/hint if addon passed an out-of-range fileIdx
+            // Fallback without fileIndex if addon passed an out-of-range fileIdx
             nuvio.prepareStream(
-                torrentId = torrentId,
-                fileIndex = null,
-                filenameHint = normalizedHint,
-                preloadBytes = 0L
+                torrentId,
+                null,
+                normalizedHint,
+                0L
             )
         }
 
@@ -190,13 +183,12 @@ class LocalTorrentStreamController(private val cacheRoot: File) {
             "fileSize" to prepared.fileSize
         )
 
-        startStatsPolling(nuvio, torrentId, prepared.id, prepared.fileSize)
+        startStatsPolling(nuvio, prepared.id, prepared.fileSize)
         return prepared.url
     }
 
     private fun startStatsPolling(
         nuvio: NuvioEngine,
-        torrentId: String,
         streamId: String,
         initialFileSize: Long
     ) {
@@ -204,21 +196,17 @@ class LocalTorrentStreamController(private val cacheRoot: File) {
         statsJob = scope.launch {
             while (isActive && activeStreamId == streamId) {
                 try {
-                    val engineStats = nuvio.currentStats()
-                    val torrentStats = engineStats.torrents.firstOrNull { it.torrentId == torrentId }
+                    val engineStats = nuvio.stats.value
                     val streamStats = nuvio.currentStreamStats(streamId)
 
-                    val peers = torrentStats?.connectedPeers ?: engineStats.connectedPeers
-                    val seeds = torrentStats?.connectedSeeds ?: 0
-                    val downSpeed = (torrentStats?.downloadRateBytesPerSec
-                        ?: engineStats.downloadRateBytesPerSec).coerceAtLeast(0L)
+                    val peers = engineStats.connectedPeers
+                    val seeds = engineStats.connectedSeeds
+                    val downSpeed = engineStats.downloadRateBytesPerSecond.coerceAtLeast(0L)
                     val fileSize = streamStats?.fileSize?.takeIf { it > 0L } ?: initialFileSize
                     val buffered = streamStats?.contiguousReadyBytes
                         ?: streamStats?.verifiedFileBytes
                         ?: 0L
-                    val progress = streamStats?.fileProgress
-                        ?: torrentStats?.progress
-                        ?: 0.0
+                    val progress = (streamStats?.fileProgress ?: 0f).toDouble().coerceIn(0.0, 1.0)
 
                     cachedTelemetry = mapOf(
                         "hasMetadata" to true,
@@ -226,7 +214,7 @@ class LocalTorrentStreamController(private val cacheRoot: File) {
                         "peers" to peers,
                         "seeds" to seeds,
                         "downloadSpeed" to downSpeed.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
-                        "progress" to progress.coerceIn(0.0, 1.0),
+                        "progress" to progress,
                         "bufferedBytes" to buffered.coerceAtLeast(0L),
                         "fileSize" to fileSize.coerceAtLeast(0L)
                     )
@@ -270,7 +258,7 @@ class LocalTorrentStreamController(private val cacheRoot: File) {
         }
         if (!prevTorrentId.isNullOrBlank()) {
             try {
-                nuvio.removeTorrent(prevTorrentId, deleteData = false)
+                nuvio.removeTorrent(prevTorrentId)
             } catch (_: Throwable) {
             }
         }
@@ -319,7 +307,6 @@ class LocalTorrentStreamController(private val cacheRoot: File) {
 
         val trackers = LinkedHashSet<String>()
 
-        // Preserve trackers embedded in magnet URI if present
         if (trimmed.startsWith("magnet:?", ignoreCase = true)) {
             try {
                 val parsed = Uri.parse(trimmed)
@@ -331,7 +318,6 @@ class LocalTorrentStreamController(private val cacheRoot: File) {
             }
         }
 
-        // Add Stremio `sources` (`tracker:udp://...` or raw tracker URLs)
         for (src in sources) {
             val s = src.trim()
             when {
