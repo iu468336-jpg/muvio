@@ -17,18 +17,19 @@ class _LandscapeFullscreenView extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        state._useSurfaceView
-            ? state._buildVideoSurface(
-                media,
-                fallbackCacheWidth: 1400,
-              )
-            : Transform.scale(
-                scale: state._zoomScale,
-                child: state._buildVideoSurface(
-                  media,
-                  fallbackCacheWidth: 1400,
-                ),
-              ),
+        if (state._useSurfaceView)
+          state._buildVideoSurface(
+            media,
+            fallbackCacheWidth: 1400,
+          )
+        else
+          Transform.scale(
+            scale: state._zoomScale,
+            child: state._buildVideoSurface(
+              media,
+              fallbackCacheWidth: 1400,
+            ),
+          ),
         if (state._controlsVisible) ...[
           const DecoratedBox(
             decoration: BoxDecoration(
