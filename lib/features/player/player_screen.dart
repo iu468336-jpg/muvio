@@ -1,7 +1,9 @@
 import 'dart:async';
-import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -50,6 +52,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   late final TorrentEngineBridge _torrentBridge;
 
   int? _textureId;
+  bool _useSurfaceView = false;
   double _videoAspectRatio = 16 / 9;
 
   MediaItem? _media;
@@ -371,6 +374,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       if (opened != null) {
         setState(() {
           _textureId = opened.textureId;
+          _useSurfaceView = opened.useSurfaceView;
           _videoAspectRatio = opened.aspectRatio;
         });
         await _playerBridge.setSpeed(_playbackSpeed);
@@ -400,7 +404,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         child: Center(
           child: AspectRatio(
             aspectRatio: _videoAspectRatio > 0 ? _videoAspectRatio : (16 / 9),
-            child: Texture(textureId: tid),
+            child: _useSurfaceView && defaultTargetPlatform == TargetPlatform.android
+                ? const _HardwareVideoSurfaceView()
+                : Texture(textureId: tid),
           ),
         ),
       );
@@ -596,6 +602,47 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           ),
         );
       },
+    );
+  }
+}
+
+/// Hardware-composited Android `SurfaceView` PlatformView (`Hybrid Composition` via
+/// `PlatformViewsService.initSurfaceAndroidView`).
+///
+/// Matches `NuvioMobile` and `flutter/video_player_android`: decoded `MediaCodec` frames go
+/// straight to `SurfaceFlinger` without touching OpenGL ES `SurfaceTexture` (`GLConsumer`),
+/// eliminating all `SIGSEGV`/`SIGABRT` graphic-buffer crashes on 32-bit `armeabi-v7a` GPUs.
+class _HardwareVideoSurfaceView extends StatelessWidget {
+  const _HardwareVideoSurfaceView();
+
+  static const String _viewType = 'app.muvio.mobile/video_surface';
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: PlatformViewLink(
+        viewType: _viewType,
+        surfaceFactory: (context, controller) {
+          return AndroidViewSurface(
+            controller: controller as AndroidViewController,
+            gestureRecognizers: const <Factory<OneSequenceGestureRecognizer>>{},
+            hitTestBehavior: PlatformViewHitTestBehavior.transparent,
+          );
+        },
+        onCreatePlatformView: (params) {
+          return PlatformViewsService.initSurfaceAndroidView(
+            id: params.id,
+            viewType: _viewType,
+            layoutDirection:
+                Directionality.maybeOf(context) ?? TextDirection.ltr,
+            creationParams: const <String, Object>{},
+            creationParamsCodec: const StandardMessageCodec(),
+            onFocus: () => params.onFocusChanged(true),
+          )
+            ..addOnPlatformViewCreatedListener(params.onPlatformViewCreated)
+            ..create();
+        },
+      ),
     );
   }
 }

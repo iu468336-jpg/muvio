@@ -57,8 +57,8 @@ class _GlassCircleButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ClipOval(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+      child: Material(
+        color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
           customBorder: const CircleBorder(),
@@ -67,9 +67,9 @@ class _GlassCircleButton extends StatelessWidget {
             height: size,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: Colors.black.withValues(alpha: 0.42),
+              color: Colors.black.withValues(alpha: 0.62),
               border: Border.all(
-                color: Colors.white.withValues(alpha: 0.18),
+                color: Colors.white.withValues(alpha: 0.24),
               ),
             ),
             child: Icon(icon, color: Colors.white, size: iconSize),

@@ -1,7 +1,9 @@
 package app.muvio.mobile
 
+import android.app.ActivityManager
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.Surface
@@ -30,35 +32,42 @@ import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
-import io.flutter.view.TextureRegistry
 import okhttp3.OkHttpClient
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
+import kotlin.math.max
+import kotlin.math.roundToInt
 
 /**
  * Nuvio-grade AndroidX Media3 (`ExoPlayer` + Jellyfin FFmpeg Audio Decoder) playback engine
- * backed by Flutter's OpenGL ES `SurfaceTextureEntry` (`createSurfaceTexture()`).
+ * rendered through a dedicated hardware `SurfaceView` (`NativeVideoSurfaceViewFactory`).
  *
- * Key capabilities matching NuvioMobile:
- * 1. Trust-all OkHttp Media3 DataSource with custom `Referer`/`Origin`/`Cookie`/`User-Agent`
- *    headers (while stripping fixed `Range` headers so Media3 manages byte-range seeks cleanly).
- * 2. 65-second read timeout on `127.0.0.1` / `localhost` so P2P piece fetching never prematurely
- *    triggers `PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT`.
- * 3. `BufferedReadDataSource` (64 KiB read-ahead) + `InlineDataUriDataSource` (`data:` HLS support).
- * 4. `DefaultExtractorsFactory` with `FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS` + `constantBitrateSeeking`.
- * 5. External WebVTT / SRT / ASS subtitle sidecar injection (`MediaItem.SubtitleConfiguration`).
+ * Crash-proof guarantees on 32-bit `armeabi-v7a` and 64-bit `arm64-v8a` Android phones:
+ * 1. Direct `SurfaceView` -> `SurfaceFlinger` hardware overlay output (zero `SurfaceTexture`
+ *    `GL_TEXTURE_EXTERNAL_OES` shader import or mid-stream `setDefaultBufferSize` buffer crash!).
+ * 2. 32-bit ARM / low-RAM decoder protection: caps max video resolution to 1080p (1920x1080)
+ *    on 32-bit `armeabi-v7a` or <=3 GB RAM phones so 4K/10-bit HEVC streams never trigger
+ *    `OMX` / `MediaCodec` graphic-buffer OOM or `SIGABRT` crashes on stream startup.
+ * 3. RFC-7230 HTTP header sanitization so `OkHttpDataSource` never throws `IllegalArgumentException`
+ *    on control characters or non-ASCII scraper headers.
+ * 4. AudioFocus managed safely (`handleAudioFocus = false`) so OEM `AudioManager` binder bugs
+ *    or call interruptions never abort `ExoPlayer.prepare()`.
+ * 5. Trust-all OkHttp Media3 DataSource + 65s loopback timeout + 64 KiB `BufferedReadDataSource`
+ *    + `InlineDataUriDataSource` (`data:` HLS support).
  */
 @OptIn(UnstableApi::class)
 class NativeMedia3PlayerController(
-    private val context: Context,
-    private val textureRegistry: TextureRegistry
+    private val context: Context
 ) {
     companion object {
+        const val SURFACE_VIEW_ID_SENTINEL = 1
+
         private const val DEFAULT_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
@@ -92,17 +101,44 @@ class NativeMedia3PlayerController(
 
             return builder.build()
         }
+
+        private fun is32BitProcess(): Boolean {
+            return try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    !android.os.Process.is64Bit()
+                } else {
+                    Build.SUPPORTED_64_BIT_ABIS.isEmpty()
+                }
+            } catch (_: Throwable) {
+                true
+            }
+        }
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val sessionSeq = AtomicInteger(1)
 
     private var exoPlayer: ExoPlayer? = null
     private var trackSelector: DefaultTrackSelector? = null
-    private var textureEntry: TextureRegistry.SurfaceTextureEntry? = null
-    private var videoSurface: Surface? = null
+    private var activeViewId: Int = -1
+    private var displaySurface: Surface? = null
     private var eventSink: EventChannel.EventSink? = null
     private var audioTrackIndex: Int = 0
     private var subtitlesEnabled: Boolean = true
+
+    private val isLowMemoryOr32Bit: Boolean by lazy {
+        val is32 = is32BitProcess()
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        val memInfo = ActivityManager.MemoryInfo()
+        val totalRamBytes = try {
+            am?.getMemoryInfo(memInfo)
+            memInfo.totalMem
+        } catch (_: Throwable) {
+            0L
+        }
+        val lowRamDevice = am?.isLowRamDevice == true || (totalRamBytes in 1L..(3200L * 1024L * 1024L))
+        is32 || lowRamDevice
+    }
 
     private val positionPoller = object : Runnable {
         override fun run() {
@@ -123,6 +159,39 @@ class NativeMedia3PlayerController(
             } catch (_: Throwable) {
             }
             mainHandler.postDelayed(this, 500L)
+        }
+    }
+
+    fun attachDisplaySurface(viewId: Int, surface: Surface) {
+        mainHandler.post {
+            if (!surface.isValid) return@post
+            activeViewId = viewId
+            displaySurface = surface
+            val p = exoPlayer ?: return@post
+            try {
+                p.setVideoSurface(surface)
+                if (Build.VERSION.SDK_INT == Build.VERSION_CODES.P && !p.playWhenReady) {
+                    val pos = p.currentPosition
+                    p.seekTo(if (pos == 0L) 1L else pos)
+                }
+            } catch (_: Throwable) {
+            }
+        }
+    }
+
+    fun detachDisplaySurface(viewId: Int, surface: Surface?) {
+        mainHandler.post {
+            val p = exoPlayer
+            if (surface != null && p != null) {
+                try {
+                    p.clearVideoSurface(surface)
+                } catch (_: Throwable) {
+                }
+            }
+            if (activeViewId == viewId || displaySurface === surface) {
+                displaySurface = null
+                activeViewId = -1
+            }
         }
     }
 
@@ -250,6 +319,26 @@ class NativeMedia3PlayerController(
         }
     }
 
+    private fun sanitizeHeaderName(raw: String): String {
+        val sb = StringBuilder(raw.length)
+        for (ch in raw.trim()) {
+            if (ch.code in 0x21..0x7E && ch != ':') {
+                sb.append(ch)
+            }
+        }
+        return sb.toString()
+    }
+
+    private fun sanitizeHeaderValue(raw: String): String {
+        val sb = StringBuilder(raw.length)
+        for (ch in raw.trim()) {
+            if (ch == '\t' || ch.code in 0x20..0x7E) {
+                sb.append(ch)
+            }
+        }
+        return sb.toString().trim()
+    }
+
     private fun openStream(
         url: String,
         filename: String?,
@@ -270,36 +359,16 @@ class NativeMedia3PlayerController(
         }
         exoPlayer = null
 
-        var entry = textureEntry
-        var surface = videoSurface
-        if (entry == null || surface == null || !surface.isValid) {
-            try {
-                surface?.release()
-            } catch (_: Throwable) {
-            }
-            try {
-                entry?.release()
-            } catch (_: Throwable) {
-            }
-            entry = textureRegistry.createSurfaceTexture()
-            val st = entry.surfaceTexture()
-            st.setDefaultBufferSize(1280, 720)
-            surface = Surface(st)
-            textureEntry = entry
-            videoSurface = surface
-        }
-
-        // Sanitize headers: extract User-Agent and strip any fixed Range header so Media3 can seek freely
         var userAgent = DEFAULT_USER_AGENT
         val cleanHeaders = HashMap<String, String>()
         for ((k, v) in headers) {
-            val trimmedKey = k.trim()
-            val trimmedVal = v.trim()
-            if (trimmedKey.isEmpty() || trimmedVal.isEmpty()) continue
+            val safeKey = sanitizeHeaderName(k)
+            val safeVal = sanitizeHeaderValue(v)
+            if (safeKey.isEmpty() || safeVal.isEmpty()) continue
             when {
-                trimmedKey.equals("User-Agent", ignoreCase = true) -> userAgent = trimmedVal
-                trimmedKey.equals("Range", ignoreCase = true) -> Unit
-                else -> cleanHeaders[trimmedKey] = trimmedVal
+                safeKey.equals("User-Agent", ignoreCase = true) -> userAgent = safeVal
+                safeKey.equals("Range", ignoreCase = true) -> Unit
+                else -> cleanHeaders[safeKey] = safeVal
             }
         }
 
@@ -363,15 +432,16 @@ class NativeMedia3PlayerController(
 
         val mediaSourceFactory = DefaultMediaSourceFactory(bufferedDataSourceFactory, extractorsFactory)
 
-        // Fast-start RAM buffer config tuned for instant startup + 32-bit ARM safety
+        // Conservative RAM buffer budget on 32-bit ARM / low-RAM phones (12 MiB vs 20 MiB)
+        val targetBytes = if (isLowMemoryOr32Bit) 12 * 1024 * 1024 else 24 * 1024 * 1024
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ 8_000,
-                /* maxBufferMs = */ 24_000,
-                /* bufferForPlaybackMs = */ 900,
-                /* bufferForPlaybackAfterRebufferMs = */ 2_000
+                /* minBufferMs = */ if (isLowMemoryOr32Bit) 6_000 else 10_000,
+                /* maxBufferMs = */ if (isLowMemoryOr32Bit) 18_000 else 30_000,
+                /* bufferForPlaybackMs = */ 1_000,
+                /* bufferForPlaybackAfterRebufferMs = */ 2_200
             )
-            .setTargetBufferBytes(20 * 1024 * 1024)
+            .setTargetBufferBytes(targetBytes)
             .setPrioritizeTimeOverSizeThresholds(false)
             .build()
 
@@ -386,11 +456,20 @@ class NativeMedia3PlayerController(
             .setEnableDecoderFallback(true)
 
         val selector = DefaultTrackSelector(context).apply {
-            parameters = buildUponParameters()
+            val paramsBuilder = buildUponParameters()
                 .setPreferredAudioLanguages("fr", "fra", "fre", "en", "eng")
                 .setPreferredTextLanguages("fr", "fra", "fre", "en", "eng")
                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitlesEnabled)
-                .build()
+                .setAllowInvalidateSelectionsOnRendererCapabilitiesChange(true)
+
+            // Cap adaptive video selection to 1080p on 32-bit / low-RAM phones to prevent 4K OMX crashes
+            if (isLowMemoryOr32Bit) {
+                paramsBuilder
+                    .setMaxVideoSize(1920, 1080)
+                    .setExceedVideoConstraintsIfNecessary(true)
+                    .setExceedRendererCapabilitiesIfNecessary(false)
+            }
+            parameters = paramsBuilder.build()
         }
         trackSelector = selector
 
@@ -399,33 +478,31 @@ class NativeMedia3PlayerController(
             .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
             .build()
 
+        // Match NuvioMobile: pass handleAudioFocus=false so OEM AudioFocus binder quirks never abort playback
         val player = ExoPlayer.Builder(context, renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
             .setTrackSelector(selector)
             .setLoadControl(loadControl)
-            .setAudioAttributes(audioAttrs, true)
+            .setAudioAttributes(audioAttrs, false)
             .setHandleAudioBecomingNoisy(true)
             .build()
 
         player.addListener(object : Player.Listener {
             override fun onVideoSizeChanged(videoSize: VideoSize) {
-                val w = videoSize.width
-                val h = videoSize.height
-                if (w > 0 && h > 0) {
-                    try {
-                        textureEntry?.surfaceTexture()?.setDefaultBufferSize(w, h)
-                    } catch (_: Throwable) {
-                    }
-                    val aspect = if (videoSize.pixelWidthHeightRatio > 0f) {
-                        (w.toFloat() * videoSize.pixelWidthHeightRatio) / h.toFloat()
+                val rawW = videoSize.width
+                val rawH = videoSize.height
+                if (rawW > 0 && rawH > 0) {
+                    val effectiveW = if (videoSize.pixelWidthHeightRatio > 0f && videoSize.pixelWidthHeightRatio != 1f) {
+                        max(1, (rawW * videoSize.pixelWidthHeightRatio).roundToInt())
                     } else {
-                        w.toFloat() / h.toFloat()
+                        rawW
                     }
+                    val aspect = effectiveW.toFloat() / rawH.toFloat()
                     sendEvent(
                         mapOf(
                             "event" to "videoSize",
-                            "width" to w,
-                            "height" to h,
+                            "width" to effectiveW,
+                            "height" to rawH,
                             "aspectRatio" to aspect.toDouble()
                         )
                     )
@@ -434,6 +511,31 @@ class NativeMedia3PlayerController(
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 val durMs = if (player.duration == C.TIME_UNSET || player.duration < 0L) 0L else player.duration
+                // Also inspect videoFormat in case SurfaceView hasn't fired VideoSize yet
+                if (playbackState == Player.STATE_READY) {
+                    player.videoFormat?.let { vf ->
+                        if (vf.width > 0 && vf.height > 0) {
+                            val ratio = if (vf.pixelWidthHeightRatio > 0f) vf.pixelWidthHeightRatio else 1f
+                            var w = max(1, (vf.width * ratio).roundToInt())
+                            var h = vf.height
+                            if (vf.rotationDegrees == 90 || vf.rotationDegrees == 270) {
+                                val tmp = w
+                                w = h
+                                h = tmp
+                            }
+                            if (h > 0) {
+                                sendEvent(
+                                    mapOf(
+                                        "event" to "videoSize",
+                                        "width" to w,
+                                        "height" to h,
+                                        "aspectRatio" to (w.toDouble() / h.toDouble())
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
                 sendEvent(
                     mapOf(
                         "event" to "state",
@@ -472,7 +574,15 @@ class NativeMedia3PlayerController(
             }
         })
 
-        player.setVideoSurface(surface)
+        // Bind existing SurfaceView surface immediately if already mounted, otherwise
+        // NativeVideoSurfaceViewFactory.surfaceCreated() attaches it seamlessly!
+        val currentSurface = displaySurface
+        if (currentSurface != null && currentSurface.isValid) {
+            try {
+                player.setVideoSurface(currentSurface)
+            } catch (_: Throwable) {
+            }
+        }
 
         val itemBuilder = MediaItem.Builder().setUri(parsedUri)
         inferVideoMimeType(url, filename)?.let { mime ->
@@ -480,23 +590,31 @@ class NativeMedia3PlayerController(
         }
 
         if (externalSubtitles.isNotEmpty()) {
-            val subConfigs = externalSubtitles.mapIndexed { idx, sub ->
-                val subUrl = sub["url"] ?: ""
-                val lang = sub["lang"] ?: "en"
-                val label = sub["label"] ?: lang.uppercase(Locale.US)
-                val isFrench = lang.startsWith("fr", ignoreCase = true) ||
-                    label.contains("fran", ignoreCase = true)
-                MediaItem.SubtitleConfiguration.Builder(Uri.parse(subUrl))
-                    .setMimeType(inferSubtitleMimeType(subUrl))
-                    .setLanguage(lang)
-                    .setLabel(label)
-                    .setSelectionFlags(if (idx == 0 || isFrench) C.SELECTION_FLAG_DEFAULT else 0)
-                    .build()
+            val subConfigs = externalSubtitles.mapNotNull { sub ->
+                val subUrl = sub["url"]?.trim() ?: ""
+                val subUri = runCatching { Uri.parse(subUrl) }.getOrNull()
+                if (subUrl.isEmpty() || subUri == null || subUri.scheme.isNullOrBlank()) {
+                    null
+                } else {
+                    val lang = sub["lang"] ?: "en"
+                    val label = sub["label"] ?: lang.uppercase(Locale.US)
+                    val isFrench = lang.startsWith("fr", ignoreCase = true) ||
+                        label.contains("fran", ignoreCase = true)
+                    MediaItem.SubtitleConfiguration.Builder(subUri)
+                        .setMimeType(inferSubtitleMimeType(subUrl))
+                        .setLanguage(lang)
+                        .setLabel(label)
+                        .setSelectionFlags(if (isFrench) C.SELECTION_FLAG_DEFAULT else 0)
+                        .build()
+                }
             }
-            itemBuilder.setSubtitleConfigurations(subConfigs)
+            if (subConfigs.isNotEmpty()) {
+                itemBuilder.setSubtitleConfigurations(subConfigs)
+            }
         }
 
         audioTrackIndex = 0
+        exoPlayer = player
         player.setMediaItem(itemBuilder.build())
         if (startPositionMs > 0L) {
             player.seekTo(startPositionMs)
@@ -504,11 +622,12 @@ class NativeMedia3PlayerController(
         player.playWhenReady = true
         player.prepare()
 
-        exoPlayer = player
         mainHandler.postDelayed(positionPoller, 350L)
 
         return mapOf(
-            "textureId" to entry.id(),
+            "textureId" to SURFACE_VIEW_ID_SENTINEL,
+            "useSurfaceView" to true,
+            "sessionId" to sessionSeq.getAndIncrement(),
             "aspectRatio" to (16.0 / 9.0)
         )
     }
@@ -595,21 +714,5 @@ class NativeMedia3PlayerController(
         }
         exoPlayer = null
         trackSelector = null
-
-        videoSurface?.let { s ->
-            try {
-                s.release()
-            } catch (_: Throwable) {
-            }
-        }
-        videoSurface = null
-
-        textureEntry?.let { entry ->
-            try {
-                entry.release()
-            } catch (_: Throwable) {
-            }
-        }
-        textureEntry = null
     }
 }

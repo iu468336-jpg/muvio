@@ -16,6 +16,7 @@ class MainActivity : FlutterActivity() {
     private val nuvioPluginsChannelName = "app.muvio.mobile/nuvio_plugins"
     private val playerChannelName = "app.muvio.mobile/native_player"
     private val playerEventsChannelName = "app.muvio.mobile/native_player_events"
+    private val videoSurfaceViewType = "app.muvio.mobile/video_surface"
     private val pipChannelName = "app.muvio.mobile/pip"
     private val diagnosticsChannelName = "app.muvio.mobile/diagnostics"
 
@@ -41,11 +42,15 @@ class MainActivity : FlutterActivity() {
         val messenger = flutterEngine.dartExecutor.binaryMessenger
 
         val playerCtrl = NativeMedia3PlayerController(
-            context = applicationContext,
-            textureRegistry = flutterEngine.renderer
+            context = applicationContext
         )
         playerCtrl.attachEventChannel(EventChannel(messenger, playerEventsChannelName))
         media3Controller = playerCtrl
+
+        flutterEngine.platformViewsController.registry.registerViewFactory(
+            videoSurfaceViewType,
+            NativeVideoSurfaceViewFactory { media3Controller }
+        )
 
         val client = TorrentServiceClient(applicationContext).also {
             it.warmUp()

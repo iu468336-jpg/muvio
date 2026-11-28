@@ -22,13 +22,18 @@ class _PortraitPlayerView extends StatelessWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                Transform.scale(
-                  scale: state._zoomScale,
-                  child: state._buildVideoSurface(
-                    media,
-                    fallbackCacheWidth: 1080,
-                  ),
-                ),
+                state._useSurfaceView
+                    ? state._buildVideoSurface(
+                        media,
+                        fallbackCacheWidth: 1080,
+                      )
+                    : Transform.scale(
+                        scale: state._zoomScale,
+                        child: state._buildVideoSurface(
+                          media,
+                          fallbackCacheWidth: 1080,
+                        ),
+                      ),
                 const DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(

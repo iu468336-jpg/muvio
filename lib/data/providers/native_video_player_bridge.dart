@@ -8,10 +8,14 @@ import 'package:muvio/data/models/media_models.dart';
 class NativePlayerOpenResult {
   const NativePlayerOpenResult({
     required this.textureId,
+    this.useSurfaceView = false,
+    this.sessionId = 0,
     this.aspectRatio = 16 / 9,
   });
 
   final int textureId;
+  final bool useSurfaceView;
+  final int sessionId;
   final double aspectRatio;
 }
 
@@ -113,9 +117,13 @@ class NativeVideoPlayerBridge {
       if (raw == null) return null;
       final texId = (raw['textureId'] as num?)?.toInt();
       if (texId == null) return null;
+      final useSurfaceView = raw['useSurfaceView'] == true;
+      final sessionId = (raw['sessionId'] as num?)?.toInt() ?? 0;
       final ar = (raw['aspectRatio'] as num?)?.toDouble() ?? (16 / 9);
       return NativePlayerOpenResult(
         textureId: texId,
+        useSurfaceView: useSurfaceView,
+        sessionId: sessionId,
         aspectRatio: ar > 0 ? ar : (16 / 9),
       );
     } on MissingPluginException {

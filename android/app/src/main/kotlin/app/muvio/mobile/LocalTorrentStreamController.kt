@@ -111,12 +111,13 @@ class LocalTorrentStreamController(private val cacheRoot: File) {
         val config = NuvioEngineConfig(
             dataDirectory = dataDir,
             cacheDirectory = diskCacheDir,
-            memoryCacheCapacityBytes = 48L * 1024L * 1024L,      // 48 MiB RAM sliding buffer (32-bit ARM safe)
-            diskCacheCapacityBytes = 1536L * 1024L * 1024L,      // 1.5 GiB persistent disk piece cache
-            torrentProfile = NuvioTorrentProfile.Fast,
+            memoryCacheCapacityBytes = 24L * 1024L * 1024L,      // 24 MiB RAM sliding buffer (32-bit ARM safe)
+            diskCacheCapacityBytes = 1280L * 1024L * 1024L,      // 1.25 GiB persistent disk piece cache
+            torrentProfile = NuvioTorrentProfile.Balanced,
             listenPort = 0,
             uploadMode = NuvioUploadMode.Limited,
-            uploadLimitBytesPerSecond = 256L * 1024L
+            uploadLimitBytesPerSecond = 192L * 1024L,
+            streamInactivityTimeoutMilliseconds = 0
         )
 
         val created = NuvioEngine.create(config, Dispatchers.IO)

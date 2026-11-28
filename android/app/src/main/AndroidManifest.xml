@@ -53,8 +53,7 @@
         <service
             android:name=".TorrentForegroundService"
             android:exported="false"
-            android:process=":torrent"
-            android:foregroundServiceType="mediaPlayback" />
+            android:process=":torrent" />
 
         <meta-data
             android:name="flutterEmbedding"
